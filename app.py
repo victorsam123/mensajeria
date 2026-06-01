@@ -19,8 +19,8 @@ BASE_DIR    = os.path.abspath(os.path.dirname(__file__))
 UPLOAD_DIR  = os.path.join(BASE_DIR, "uploads")
 EXPORT_DIR  = os.path.join(BASE_DIR, "exports")
 DB_PATH     = os.path.join(BASE_DIR, "database", "mensajeria.db")
-ADMIN_USERNAME = "admin"
-ADMIN_DEFAULT_PASSWORD = os.getenv("ADMIN_PASSWORD", "513625")
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin").strip() or "admin"
+ADMIN_INITIAL_PASSWORD = os.getenv("ADMIN_PASSWORD", "cambiar-esta-clave")
 
 
 def obtener_database_uri() -> str:
@@ -38,7 +38,10 @@ def obtener_database_uri() -> str:
 ALLOWED_EXTENSIONS = {"xlsx", "xls"}
 
 app = Flask(__name__)
-app.secret_key = os.getenv("SECRET_KEY", "mensajeria-masiva-dev-key")
+SECRET_KEY = os.getenv("SECRET_KEY", "").strip()
+if not SECRET_KEY and os.getenv("RAILWAY_ENVIRONMENT"):
+    raise RuntimeError("SECRET_KEY es obligatoria en Railway/producción.")
+app.secret_key = SECRET_KEY or "mensajeria-masiva-dev-key"
 
 app.config["SQLALCHEMY_DATABASE_URI"]        = obtener_database_uri()
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
@@ -150,27 +153,18 @@ class RegistroMensajeWhatsApp(db.Model):
 
 
 def ensure_admin_user() -> None:
-    admin = Usuario.query.filter_by(username=ADMIN_USERNAME).first()
-    if not admin:
-        admin = Usuario(username=ADMIN_USERNAME, is_admin=True, activo=True)
-        admin.set_password(ADMIN_DEFAULT_PASSWORD)
-        db.session.add(admin)
-        db.session.commit()
+    admin_exists = Usuario.query.filter_by(is_admin=True).first()
+    if admin_exists:
         return
 
-    changed = False
-    if not admin.is_admin:
-        admin.is_admin = True
-        changed = True
-    if not admin.activo:
-        admin.activo = True
-        changed = True
-    # Se mantiene esta contraseña para la cuenta admin como pidió el usuario.
-    if not admin.check_password(ADMIN_DEFAULT_PASSWORD):
-        admin.set_password(ADMIN_DEFAULT_PASSWORD)
-        changed = True
-    if changed:
-        db.session.commit()
+    admin = Usuario(
+        username=ADMIN_USERNAME,
+        is_admin=True,
+        activo=True,
+    )
+    admin.set_password(ADMIN_INITIAL_PASSWORD)
+    db.session.add(admin)
+    db.session.commit()
 
 
 with app.app_context():
