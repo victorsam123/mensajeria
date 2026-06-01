@@ -8,7 +8,7 @@ from flask import (
     Flask, g, render_template, request, redirect,
     url_for, session, flash, send_file
 )
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, text, func, case
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
@@ -92,6 +92,43 @@ class Usuario(db.Model):
 
     def check_password(self, password: str) -> bool:
         return check_password_hash(self.password_hash, password)
+
+
+class SesionUsuario(db.Model):
+    __tablename__ = "sesiones_usuario"
+
+    id                   = db.Column(db.Integer, primary_key=True)
+    usuario_id           = db.Column(db.Integer, db.ForeignKey("usuarios.id"), nullable=False, index=True)
+    username             = db.Column(db.String(80), nullable=False, index=True)
+    fecha                = db.Column(db.Date, nullable=False, index=True)
+    hora_inicio          = db.Column(db.DateTime, nullable=False)
+    hora_fin             = db.Column(db.DateTime)
+    total_procesados     = db.Column(db.Integer, default=0)
+    total_validos        = db.Column(db.Integer, default=0)
+    total_sin_telefono   = db.Column(db.Integer, default=0)
+    total_duplicados     = db.Column(db.Integer, default=0)
+    archivo_origen       = db.Column(db.String(255))
+    hoja_origen          = db.Column(db.String(255))
+    creado_en            = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class RegistroEnvioUsuario(db.Model):
+    __tablename__ = "registros_envio_usuario"
+
+    id              = db.Column(db.Integer, primary_key=True)
+    usuario_id      = db.Column(db.Integer, db.ForeignKey("usuarios.id"), nullable=False, index=True)
+    username        = db.Column(db.String(80), nullable=False, index=True)
+    sesion_id       = db.Column(db.Integer, db.ForeignKey("sesiones_usuario.id"), nullable=False, index=True)
+    fecha           = db.Column(db.Date, nullable=False, index=True)
+    hora            = db.Column(db.DateTime, nullable=False)
+    nombre          = db.Column(db.String(200))
+    apellido        = db.Column(db.String(200))
+    documento_madre = db.Column(db.String(100))
+    telefono        = db.Column(db.String(50))
+    estado          = db.Column(db.String(20), nullable=False, index=True)
+    archivo_origen  = db.Column(db.String(255), index=True)
+    hoja_origen     = db.Column(db.String(255), index=True)
+    creado_en       = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 def ensure_admin_user() -> None:
@@ -190,6 +227,113 @@ def normalizar_next_url(next_url: str) -> str:
     if next_url and next_url.startswith("/") and not next_url.startswith("//"):
         return next_url
     return url_for("index")
+
+
+def fecha_actual():
+    return datetime.now().date()
+
+
+def abrir_sesion_usuario(user: Usuario) -> SesionUsuario:
+    ahora = datetime.now()
+    sesiones_abiertas = SesionUsuario.query.filter_by(
+        usuario_id=user.id,
+        hora_fin=None,
+    ).all()
+    for sesion_abierta in sesiones_abiertas:
+        sesion_abierta.hora_fin = ahora
+
+    sesion_usuario = SesionUsuario(
+        usuario_id=user.id,
+        username=user.username,
+        fecha=ahora.date(),
+        hora_inicio=ahora,
+    )
+    db.session.add(sesion_usuario)
+    db.session.commit()
+    return sesion_usuario
+
+
+def obtener_sesion_usuario_actual() -> SesionUsuario | None:
+    sesion_usuario_id = session.get("sesion_usuario_id")
+    if not sesion_usuario_id:
+        return None
+    return db.session.get(SesionUsuario, sesion_usuario_id)
+
+
+def cerrar_sesion_usuario_actual() -> None:
+    sesion_usuario = obtener_sesion_usuario_actual()
+    if sesion_usuario and not sesion_usuario.hora_fin:
+        sesion_usuario.hora_fin = datetime.now()
+        db.session.commit()
+    session.pop("sesion_usuario_id", None)
+
+
+def actualizar_totales_sesion_usuario(sesion_usuario: SesionUsuario, stats: dict, archivo: str, hoja: str) -> None:
+    sesion_usuario.total_procesados = (sesion_usuario.total_procesados or 0) + int(stats.get("total", 0))
+    sesion_usuario.total_validos = (sesion_usuario.total_validos or 0) + int(stats.get("validos", 0))
+    sesion_usuario.total_sin_telefono = (sesion_usuario.total_sin_telefono or 0) + int(stats.get("sin_tel", 0))
+    sesion_usuario.total_duplicados = (sesion_usuario.total_duplicados or 0) + int(stats.get("duplicados", 0))
+    sesion_usuario.archivo_origen = archivo
+    sesion_usuario.hoja_origen = hoja
+
+
+def resumen_registros(query):
+    registros = query.all()
+    total = len(registros)
+    validos = sum(1 for r in registros if r.estado == "valido")
+    sin_telefono = sum(1 for r in registros if r.estado == "sin_telefono")
+    duplicados = sum(1 for r in registros if r.estado == "duplicado")
+    return {
+        "total": total,
+        "validos": validos,
+        "sin_telefono": sin_telefono,
+        "duplicados": duplicados,
+    }
+
+
+def resumen_usuario_hoy(user: Usuario) -> dict:
+    hoy = fecha_actual()
+    return resumen_registros(
+        RegistroEnvioUsuario.query.filter_by(usuario_id=user.id, fecha=hoy)
+    )
+
+
+def resumen_general_hoy() -> dict:
+    hoy = fecha_actual()
+    return resumen_registros(
+        RegistroEnvioUsuario.query.filter_by(fecha=hoy)
+    )
+
+
+def totales_por_usuario_hoy():
+    hoy = fecha_actual()
+    filas = db.session.query(
+        RegistroEnvioUsuario.username,
+        func.count(RegistroEnvioUsuario.id),
+        func.sum(case((RegistroEnvioUsuario.estado == "valido", 1), else_=0)),
+    ).filter(
+        RegistroEnvioUsuario.fecha == hoy
+    ).group_by(
+        RegistroEnvioUsuario.username
+    ).order_by(
+        RegistroEnvioUsuario.username.asc()
+    ).all()
+    return [
+        {
+            "username": username,
+            "total": total or 0,
+            "validos": validos or 0,
+        }
+        for username, total, validos in filas
+    ]
+
+
+def usuarios_activos_hoy() -> int:
+    hoy = fecha_actual()
+    return SesionUsuario.query.filter(
+        SesionUsuario.fecha == hoy,
+        SesionUsuario.hora_fin.is_(None),
+    ).count()
 
 
 @app.before_request
@@ -372,7 +516,14 @@ def procesar_dataframe(
 @app.route("/")
 @login_required
 def index():
-    return render_template("index.html")
+    current_user = get_current_user()
+    return render_template(
+        "index.html",
+        resumen_hoy=resumen_usuario_hoy(current_user),
+        resumen_general=resumen_general_hoy() if current_user.is_admin else None,
+        totales_por_usuario=totales_por_usuario_hoy() if current_user.is_admin else [],
+        usuarios_activos=usuarios_activos_hoy() if current_user.is_admin else 0,
+    )
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -395,6 +546,8 @@ def login():
 
         session["user_id"] = user.id
         session["username"] = user.username
+        sesion_usuario = abrir_sesion_usuario(user)
+        session["sesion_usuario_id"] = sesion_usuario.id
         next_url_raw = request.form.get("next") or request.args.get("next") or ""
         next_url = normalizar_next_url(next_url_raw)
         flash(f"Bienvenido, {user.username}.", "success")
@@ -437,6 +590,7 @@ def register():
 @app.route("/logout")
 @login_required
 def logout():
+    cerrar_sesion_usuario_actual()
     session.pop("user_id", None)
     session.pop("username", None)
     flash("Sesión cerrada.", "info")
@@ -538,6 +692,131 @@ def users():
         "users.html",
         usuarios=usuarios,
         total_usuarios=len(usuarios),
+    )
+
+
+@app.route("/reporte-diario")
+@admin_required
+def reporte_diario():
+    fecha_raw = request.args.get("fecha", "").strip()
+    try:
+        fecha_reporte = datetime.strptime(fecha_raw, "%Y-%m-%d").date() if fecha_raw else fecha_actual()
+    except ValueError:
+        fecha_reporte = fecha_actual()
+
+    usuario_id = request.args.get("usuario_id", "").strip()
+    estado = request.args.get("estado", "").strip()
+    archivo = request.args.get("archivo", "").strip()
+    hoja = request.args.get("hoja", "").strip()
+
+    query = RegistroEnvioUsuario.query.filter(RegistroEnvioUsuario.fecha == fecha_reporte)
+    if usuario_id.isdigit():
+        query = query.filter(RegistroEnvioUsuario.usuario_id == int(usuario_id))
+    if estado:
+        query = query.filter(RegistroEnvioUsuario.estado == estado)
+    if archivo:
+        query = query.filter(RegistroEnvioUsuario.archivo_origen == archivo)
+    if hoja:
+        query = query.filter(RegistroEnvioUsuario.hoja_origen == hoja)
+
+    registros = query.order_by(
+        RegistroEnvioUsuario.username.asc(),
+        RegistroEnvioUsuario.hora.asc(),
+    ).all()
+
+    sesiones_ids = sorted({r.sesion_id for r in registros})
+    sesiones = {
+        s.id: s
+        for s in SesionUsuario.query.filter(SesionUsuario.id.in_(sesiones_ids)).all()
+    } if sesiones_ids else {}
+
+    grupos = {}
+    for registro in registros:
+        grupo = grupos.setdefault(registro.sesion_id, {
+            "sesion": sesiones.get(registro.sesion_id),
+            "username": registro.username,
+            "archivos": set(),
+            "hojas": set(),
+            "total": 0,
+            "validos": 0,
+            "sin_telefono": 0,
+            "duplicados": 0,
+        })
+        if registro.archivo_origen:
+            grupo["archivos"].add(registro.archivo_origen)
+        if registro.hoja_origen:
+            grupo["hojas"].add(registro.hoja_origen)
+        grupo["total"] += 1
+        if registro.estado == "valido":
+            grupo["validos"] += 1
+        elif registro.estado == "sin_telefono":
+            grupo["sin_telefono"] += 1
+        elif registro.estado == "duplicado":
+            grupo["duplicados"] += 1
+
+    filas_reporte = []
+    for grupo in grupos.values():
+        filas_reporte.append({
+            "username": grupo["username"],
+            "hora_inicio": grupo["sesion"].hora_inicio if grupo["sesion"] else None,
+            "hora_fin": grupo["sesion"].hora_fin if grupo["sesion"] else None,
+            "total": grupo["total"],
+            "validos": grupo["validos"],
+            "sin_telefono": grupo["sin_telefono"],
+            "duplicados": grupo["duplicados"],
+            "archivo": ", ".join(sorted(grupo["archivos"])) or "-",
+            "hoja": ", ".join(sorted(grupo["hojas"])) or "-",
+        })
+
+    resumen = {
+        "total": sum(f["total"] for f in filas_reporte),
+        "validos": sum(f["validos"] for f in filas_reporte),
+        "sin_telefono": sum(f["sin_telefono"] for f in filas_reporte),
+        "duplicados": sum(f["duplicados"] for f in filas_reporte),
+        "usuarios_activos": SesionUsuario.query.filter(
+            SesionUsuario.fecha == fecha_reporte,
+            SesionUsuario.hora_fin.is_(None),
+        ).count(),
+    }
+
+    total_por_usuario = {}
+    for fila in filas_reporte:
+        total_por_usuario[fila["username"]] = total_por_usuario.get(fila["username"], 0) + fila["total"]
+
+    usuarios = Usuario.query.order_by(Usuario.username.asc()).all()
+    archivos = [
+        row[0] for row in db.session.query(RegistroEnvioUsuario.archivo_origen)
+        .filter(RegistroEnvioUsuario.archivo_origen.isnot(None))
+        .distinct()
+        .order_by(RegistroEnvioUsuario.archivo_origen.asc())
+        .all()
+        if row[0]
+    ]
+    hojas = [
+        row[0] for row in db.session.query(RegistroEnvioUsuario.hoja_origen)
+        .filter(RegistroEnvioUsuario.hoja_origen.isnot(None))
+        .distinct()
+        .order_by(RegistroEnvioUsuario.hoja_origen.asc())
+        .all()
+        if row[0]
+    ]
+
+    return render_template(
+        "reporte_diario.html",
+        fecha_reporte=fecha_reporte,
+        filtros={
+            "fecha": fecha_reporte.strftime("%Y-%m-%d"),
+            "usuario_id": usuario_id,
+            "estado": estado,
+            "archivo": archivo,
+            "hoja": hoja,
+        },
+        usuarios=usuarios,
+        archivos=archivos,
+        hojas=hojas,
+        filas=filas_reporte,
+        resumen=resumen,
+        total_por_usuario=total_por_usuario,
     )
 
 
@@ -661,10 +940,17 @@ def process():
     session["sesion_id"] = sesion_id
     session["hoja"]      = hoja
     session["stats"]     = stats
+    current_user = get_current_user()
+    sesion_usuario = obtener_sesion_usuario_actual()
+    if not sesion_usuario and current_user:
+        sesion_usuario = abrir_sesion_usuario(current_user)
+        session["sesion_usuario_id"] = sesion_usuario.id
 
     # Borrar registros anteriores de esta sesión (por si recargó)
     ContactoTemporal.query.filter_by(sesion_id=sesion_id).delete()
 
+    archivo_origen = session.get("archivo", "")
+    hora_registro = datetime.now()
     for r in registros:
         db.session.add(ContactoTemporal(
             sesion_id=sesion_id,
@@ -674,6 +960,23 @@ def process():
             telefono=r["telefono"],
             estado=r["estado"],
         ))
+        if current_user and sesion_usuario:
+            db.session.add(RegistroEnvioUsuario(
+                usuario_id=current_user.id,
+                username=current_user.username,
+                sesion_id=sesion_usuario.id,
+                fecha=hora_registro.date(),
+                hora=hora_registro,
+                nombre=r["nombre"],
+                apellido=r["apellido"],
+                documento_madre=r["documento_madre"],
+                telefono=r["telefono"],
+                estado=r["estado"],
+                archivo_origen=archivo_origen,
+                hoja_origen=hoja,
+            ))
+    if sesion_usuario:
+        actualizar_totales_sesion_usuario(sesion_usuario, stats, archivo_origen, hoja)
     db.session.commit()
 
     return redirect(url_for("preview"))
