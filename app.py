@@ -2,13 +2,15 @@ import os
 import re
 import uuid
 import pandas as pd
+from functools import wraps
 from datetime import datetime
 from flask import (
-    Flask, render_template, request, redirect,
-    url_for, session, flash, send_file, jsonify
+    Flask, g, render_template, request, redirect,
+    url_for, session, flash, send_file
 )
 from sqlalchemy import inspect, text
 from flask_sqlalchemy import SQLAlchemy
+from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
 # ─────────────────────────── Configuración ───────────────────────────
@@ -73,6 +75,22 @@ class ContactoTemporal(db.Model):
         }
 
 
+class Usuario(db.Model):
+    __tablename__ = "usuarios"
+
+    id            = db.Column(db.Integer, primary_key=True)
+    username      = db.Column(db.String(80), nullable=False, unique=True, index=True)
+    password_hash = db.Column(db.String(255), nullable=False)
+    activo        = db.Column(db.Boolean, default=True)
+    creado_en     = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def set_password(self, password: str) -> None:
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password: str) -> bool:
+        return check_password_hash(self.password_hash, password)
+
+
 with app.app_context():
     db.create_all()
     inspector = inspect(db.engine)
@@ -88,6 +106,50 @@ with app.app_context():
 # ─────────────────────────── Utilidades ──────────────────────────────
 def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def get_current_user() -> Usuario | None:
+    user_id = session.get("user_id")
+    if not user_id:
+        return None
+
+    user = db.session.get(Usuario, user_id)
+    if not user or not user.activo:
+        session.pop("user_id", None)
+        session.pop("username", None)
+        return None
+
+    return user
+
+
+def login_required(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        if not get_current_user():
+            flash("Debes iniciar sesión para continuar.", "warning")
+            return redirect(url_for("login", next=request.path))
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+def normalizar_next_url(next_url: str) -> str:
+    if next_url and next_url.startswith("/") and not next_url.startswith("//"):
+        return next_url
+    return url_for("index")
+
+
+@app.before_request
+def load_current_user():
+    g.current_user = get_current_user()
+
+
+@app.context_processor
+def inject_auth_context():
+    return {
+        "current_user": g.get("current_user"),
+        "has_users": Usuario.query.count() > 0,
+    }
 
 
 # Palabras clave para detectar columnas automáticamente.
@@ -255,11 +317,126 @@ def procesar_dataframe(
 # ─────────────────────────── Rutas ───────────────────────────────────
 
 @app.route("/")
+@login_required
 def index():
     return render_template("index.html")
 
 
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if g.get("current_user"):
+        return redirect(url_for("index"))
+
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+
+        if not username or not password:
+            flash("Ingresa usuario y contraseña.", "warning")
+            return redirect(url_for("login"))
+
+        user = Usuario.query.filter_by(username=username).first()
+        if not user or not user.activo or not user.check_password(password):
+            flash("Credenciales inválidas.", "danger")
+            return redirect(url_for("login"))
+
+        session["user_id"] = user.id
+        session["username"] = user.username
+        next_url_raw = request.form.get("next") or request.args.get("next") or ""
+        next_url = normalizar_next_url(next_url_raw)
+        flash(f"Bienvenido, {user.username}.", "success")
+        return redirect(next_url)
+
+    return render_template("login.html", next_url=request.args.get("next", ""))
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    total_users = Usuario.query.count()
+    puede_registrar = total_users == 0 or bool(g.get("current_user"))
+
+    if not puede_registrar:
+        flash("Solo un usuario autenticado puede crear más usuarios.", "warning")
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        confirm  = request.form.get("confirm_password", "")
+
+        if len(username) < 3:
+            flash("El usuario debe tener al menos 3 caracteres.", "warning")
+            return redirect(url_for("register"))
+        if len(password) < 6:
+            flash("La contraseña debe tener al menos 6 caracteres.", "warning")
+            return redirect(url_for("register"))
+        if password != confirm:
+            flash("Las contraseñas no coinciden.", "warning")
+            return redirect(url_for("register"))
+        if Usuario.query.filter_by(username=username).first():
+            flash("Ese usuario ya existe.", "danger")
+            return redirect(url_for("register"))
+
+        user = Usuario(username=username)
+        user.set_password(password)
+        db.session.add(user)
+        db.session.commit()
+
+        if total_users == 0:
+            session["user_id"] = user.id
+            session["username"] = user.username
+            flash("Usuario inicial creado correctamente.", "success")
+            return redirect(url_for("index"))
+
+        flash("Usuario creado correctamente.", "success")
+        return redirect(url_for("users"))
+
+    return render_template("register.html")
+
+
+@app.route("/logout")
+@login_required
+def logout():
+    session.pop("user_id", None)
+    session.pop("username", None)
+    flash("Sesión cerrada.", "info")
+    return redirect(url_for("login"))
+
+
+@app.route("/users", methods=["GET", "POST"])
+@login_required
+def users():
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        confirm  = request.form.get("confirm_password", "")
+
+        if len(username) < 3:
+            flash("El usuario debe tener al menos 3 caracteres.", "warning")
+            return redirect(url_for("users"))
+        if len(password) < 6:
+            flash("La contraseña debe tener al menos 6 caracteres.", "warning")
+            return redirect(url_for("users"))
+        if password != confirm:
+            flash("Las contraseñas no coinciden.", "warning")
+            return redirect(url_for("users"))
+        if Usuario.query.filter_by(username=username).first():
+            flash("Ese usuario ya existe.", "danger")
+            return redirect(url_for("users"))
+
+        user = Usuario(username=username)
+        user.set_password(password)
+        db.session.add(user)
+        db.session.commit()
+        flash("Nuevo usuario creado correctamente.", "success")
+        return redirect(url_for("users"))
+
+    usuarios = Usuario.query.order_by(Usuario.creado_en.desc()).all()
+    return render_template("users.html", usuarios=usuarios)
+
+
 @app.route("/upload", methods=["POST"])
+@login_required
 def upload():
     if "excel_file" not in request.files:
         flash("No se seleccionó ningún archivo.", "danger")
@@ -299,6 +476,7 @@ def upload():
 
 
 @app.route("/select-sheet")
+@login_required
 def select_sheet():
     if "hojas" not in session:
         flash("Primero debes cargar un archivo.", "warning")
@@ -312,6 +490,7 @@ def select_sheet():
 
 
 @app.route("/process", methods=["POST"])
+@login_required
 def process():
     hoja = request.form.get("hoja", "").strip()
     if not hoja:
@@ -395,6 +574,7 @@ def process():
 
 
 @app.route("/map-columns", methods=["GET", "POST"])
+@login_required
 def map_columns():
     """Permite al usuario seleccionar manualmente las columnas."""
     if "hojas" not in session:
@@ -416,6 +596,7 @@ def map_columns():
 
 
 @app.route("/preview")
+@login_required
 def preview():
     sesion_id = session.get("sesion_id")
     if not sesion_id:
@@ -435,6 +616,7 @@ def preview():
 
 
 @app.route("/export/<fmt>")
+@login_required
 def export(fmt: str):
     sesion_id = session.get("sesion_id")
     if not sesion_id:
@@ -481,6 +663,7 @@ def export(fmt: str):
 
 
 @app.route("/reset")
+@login_required
 def reset():
     """Limpia la sesión actual y borra los contactos temporales."""
     sesion_id = session.get("sesion_id")
@@ -496,7 +679,17 @@ def reset():
         except OSError:
             pass
 
-    session.clear()
+    session.pop("sesion_id", None)
+    session.pop("hoja", None)
+    session.pop("stats", None)
+    session.pop("archivo", None)
+    session.pop("ruta", None)
+    session.pop("hojas", None)
+    session.pop("columnas", None)
+    session.pop("col_nombre", None)
+    session.pop("col_apellido", None)
+    session.pop("col_doc_madre", None)
+    session.pop("col_telefono", None)
     flash("Sesión reiniciada correctamente.", "success")
     return redirect(url_for("index"))
 
