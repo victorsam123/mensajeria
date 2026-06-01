@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Inicio – Cargar Excel{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-7 col-md-9">
+
+    <!-- Encabezado -->
+    <div class="text-center mb-4">
+      <div class="display-icon mb-3">
+        <i class="bi bi-file-earmark-spreadsheet text-primary" style="font-size:4rem;"></i>
+      </div>
+      <h1 class="h2 fw-bold">Cargar Archivo Excel</h1>
+      <p class="text-muted">
+        Sube tu archivo Excel con los contactos y el sistema detectará
+        automáticamente las columnas de teléfono, nombre y apellido de la madre.
+      </p>
+    </div>
+
+    <!-- Tarjeta de carga -->
+    <div class="card shadow-sm border-0">
+      <div class="card-body p-4">
+        <form id="uploadForm" action="{{ url_for('upload') }}" method="POST"
+              enctype="multipart/form-data">
+
+          <!-- Zona de arrastre / selección -->
+          <div id="dropZone" class="drop-zone rounded mb-3 text-center p-5"
+               onclick="document.getElementById('excel_file').click()">
+            <i class="bi bi-cloud-upload fs-1 text-primary mb-2 d-block"></i>
+            <p class="mb-1 fw-semibold">Arrastra tu archivo aquí</p>
+            <p class="text-muted small mb-0">o haz clic para seleccionarlo</p>
+            <p class="text-muted small mt-1">Formatos aceptados: <strong>.xlsx</strong> · <strong>.xls</strong></p>
+          </div>
+
+          <input type="file" id="excel_file" name="excel_file"
+                 class="d-none" accept=".xlsx,.xls" required />
+
+          <!-- Nombre del archivo seleccionado -->
+          <div id="fileInfo" class="d-none alert alert-info py-2 px-3 mb-3">
+            <i class="bi bi-file-earmark-check-fill me-2"></i>
+            <span id="fileName"></span>
+          </div>
+
+          <div class="d-grid">
+            <button type="submit" id="btnUpload"
+                    class="btn btn-primary btn-lg" disabled>
+              <i class="bi bi-upload me-2"></i>Cargar y Detectar Hojas
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Pasos del flujo -->
+    <div class="card border-0 bg-light mt-4">
+      <div class="card-body">
+        <h6 class="fw-semibold mb-3 text-muted text-uppercase" style="font-size:.75rem; letter-spacing:.05em;">
+          Flujo de trabajo
+        </h6>
+        <div class="d-flex flex-column gap-2">
+          {% set pasos = [
+            ("1", "Cargar archivo Excel", "cloud-arrow-up", "primary"),
+            ("2", "Seleccionar hoja", "journal-text", "secondary"),
+            ("3", "Detección de columnas", "search", "secondary"),
+            ("4", "Vista previa y limpieza", "table", "secondary"),
+            ("5", "Exportar contactos", "download", "secondary"),
+          ] %}
+          {% for num, texto, icono, color in pasos %}
+          <div class="d-flex align-items-center gap-3">
+            <span class="badge bg-{{ color }} rounded-pill px-2 py-1" style="min-width:1.8rem;">{{ num }}</span>
+            <i class="bi bi-{{ icono }} text-{{ color }}"></i>
+            <span class="small {% if color == 'primary' %}fw-semibold{% else %}text-muted{% endif %}">{{ texto }}</span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const input    = document.getElementById("excel_file");
+const dropZone = document.getElementById("dropZone");
+const fileInfo = document.getElementById("fileInfo");
+const fileName = document.getElementById("fileName");
+const btnUpload = document.getElementById("btnUpload");
+
+function mostrarArchivo(name) {
+  fileName.textContent = name;
+  fileInfo.classList.remove("d-none");
+  btnUpload.disabled = false;
+  dropZone.classList.add("drop-zone--active");
+}
+
+input.addEventListener("change", () => {
+  if (input.files.length) mostrarArchivo(input.files[0].name);
+});
+
+// Arrastrar y soltar
+dropZone.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  dropZone.classList.add("drop-zone--hover");
+});
+dropZone.addEventListener("dragleave", () => {
+  dropZone.classList.remove("drop-zone--hover");
+});
+dropZone.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dropZone.classList.remove("drop-zone--hover");
+  const file = e.dataTransfer.files[0];
+  if (!file) return;
+  const ext = file.name.split(".").pop().toLowerCase();
+  if (!["xlsx","xls"].includes(ext)) {
+    alert("Solo se permiten archivos .xlsx o .xls");
+    return;
+  }
+  // Asignar al input
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  input.files = dt.files;
+  mostrarArchivo(file.name);
+});
+</script>
+{% endblock %}

@@ -1,0 +1,288 @@
+{% extends "base.html" %}
+{% block title %}Vista Previa – Contactos{% endblock %}
+
+{% block content %}
+
+<!-- ── Encabezado ── -->
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+  <div>
+    <h1 class="h3 fw-bold mb-0">
+      <i class="bi bi-table text-primary me-2"></i>Vista Previa de Contactos
+    </h1>
+    <p class="text-muted small mb-0 mt-1">
+      Archivo: <strong>{{ archivo }}</strong> &nbsp;|&nbsp; Hoja: <strong>{{ hoja }}</strong>
+    </p>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{{ url_for('export', fmt='excel') }}" class="btn btn-success">
+      <i class="bi bi-file-earmark-excel me-1"></i>Exportar Excel
+    </a>
+    <a href="{{ url_for('export', fmt='csv') }}" class="btn btn-outline-primary">
+      <i class="bi bi-filetype-csv me-1"></i>Exportar CSV
+    </a>
+    <a href="{{ url_for('reset') }}" class="btn btn-outline-secondary">
+      <i class="bi bi-arrow-counterclockwise me-1"></i>Nueva sesión
+    </a>
+  </div>
+</div>
+
+<!-- ── Estadísticas ── -->
+<div class="row g-3 mb-4">
+
+  <div class="col-6 col-md-4 col-lg">
+    <div class="card stat-card border-0 shadow-sm text-center h-100">
+      <div class="card-body py-3">
+        <div class="stat-icon text-secondary mb-1">
+          <i class="bi bi-people-fill fs-3"></i>
+        </div>
+        <div class="fs-2 fw-bold">{{ stats.total }}</div>
+        <div class="text-muted small">Total leídos</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-6 col-md-4 col-lg">
+    <div class="card stat-card border-0 shadow-sm text-center h-100">
+      <div class="card-body py-3">
+        <div class="stat-icon text-success mb-1">
+          <i class="bi bi-check-circle-fill fs-3"></i>
+        </div>
+        <div class="fs-2 fw-bold text-success">{{ stats.validos }}</div>
+        <div class="text-muted small">Válidos / listos</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-6 col-md-4 col-lg">
+    <div class="card stat-card border-0 shadow-sm text-center h-100">
+      <div class="card-body py-3">
+        <div class="stat-icon text-warning mb-1">
+          <i class="bi bi-copy fs-3"></i>
+        </div>
+        <div class="fs-2 fw-bold text-warning">{{ stats.duplicados }}</div>
+        <div class="text-muted small">Duplicados</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-6 col-md-4 col-lg">
+    <div class="card stat-card border-0 shadow-sm text-center h-100">
+      <div class="card-body py-3">
+        <div class="stat-icon text-danger mb-1">
+          <i class="bi bi-telephone-x-fill fs-3"></i>
+        </div>
+        <div class="fs-2 fw-bold text-danger">{{ stats.sin_tel }}</div>
+        <div class="text-muted small">Sin teléfono</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-6 col-md-4 col-lg">
+    <div class="card stat-card border-0 shadow-sm text-center h-100">
+      <div class="card-body py-3">
+        <div class="stat-icon text-primary mb-1">
+          <i class="bi bi-whatsapp fs-3"></i>
+        </div>
+        <div id="contadorEnviados" class="fs-2 fw-bold text-primary">0</div>
+        <div class="text-muted small">Enviados</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── Filtros de tabla ── -->
+<div class="card border-0 shadow-sm mb-3">
+  <div class="card-body py-2 px-3 d-flex flex-wrap gap-2 align-items-center">
+    <span class="text-muted small me-2">Mostrar:</span>
+    <button class="btn btn-sm btn-outline-secondary filter-btn active" data-filter="todos">
+      Todos ({{ contactos|length }})
+    </button>
+    <button class="btn btn-sm btn-outline-success filter-btn" data-filter="valido">
+      <i class="bi bi-check-circle me-1"></i>Válidos ({{ stats.validos }})
+    </button>
+    <button class="btn btn-sm btn-outline-warning filter-btn" data-filter="duplicado">
+      <i class="bi bi-copy me-1"></i>Duplicados ({{ stats.duplicados }})
+    </button>
+    <button class="btn btn-sm btn-outline-danger filter-btn" data-filter="sin_telefono">
+      <i class="bi bi-telephone-x me-1"></i>Sin teléfono ({{ stats.sin_tel }})
+    </button>
+
+    <div class="ms-auto">
+      <input type="text" id="busqueda" class="form-control form-control-sm"
+             placeholder="Buscar nombre, apellido o teléfono…" style="min-width:200px;">
+    </div>
+  </div>
+</div>
+
+<!-- ── Tabla ── -->
+<div class="card border-0 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover table-sm mb-0 align-middle" id="tablaContactos">
+      <thead class="table-dark">
+        <tr>
+          <th class="ps-3">#</th>
+          <th>Nombre</th>
+          <th>Apellido</th>
+          <th>Documento Madre</th>
+          <th>Teléfono</th>
+          <th class="text-center">Estado</th>
+          <th class="text-center">Acción</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in contactos %}
+        <tr class="fila-contacto" data-estado="{{ c.estado }}" data-telefono="{{ c.telefono or '' }}">
+          <td class="ps-3 text-muted small">{{ loop.index }}</td>
+          <td>{{ c.nombre or "—" }}</td>
+          <td>{{ c.apellido or "—" }}</td>
+          <td class="font-monospace">{{ c.documento_madre or "—" }}</td>
+          <td class="font-monospace">{{ c.telefono or "—" }}</td>
+          <td class="text-center">
+            {% if c.estado == "valido" %}
+              <span class="badge bg-success">Válido</span>
+            {% elif c.estado == "duplicado" %}
+              <span class="badge bg-warning text-dark">Duplicado</span>
+            {% else %}
+              <span class="badge bg-danger">Sin teléfono</span>
+            {% endif %}
+          </td>
+          <td class="text-center">
+            {% if c.estado == "valido" and c.telefono %}
+              <a
+                href="https://api.whatsapp.com/send?phone={{ c.telefono|replace('+', '') }}"
+                class="btn btn-sm btn-success whatsapp-btn"
+                data-telefono="{{ c.telefono|replace('+', '') }}"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <i class="bi bi-whatsapp me-1"></i>WhatsApp
+              </a>
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="7" class="text-center py-4 text-muted">
+            No se encontraron contactos.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if contactos %}
+  <div class="card-footer text-muted small text-end py-2 px-3">
+    Mostrando <span id="contadorVisible">{{ contactos|length }}</span> de {{ contactos|length }} registros
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── Filtrado por estado ──
+const filas       = document.querySelectorAll(".fila-contacto");
+const filterBtns  = document.querySelectorAll(".filter-btn");
+const busqueda    = document.getElementById("busqueda");
+const contador    = document.getElementById("contadorVisible");
+const contadorEnviados = document.getElementById("contadorEnviados");
+const whatsappBtns = document.querySelectorAll(".whatsapp-btn");
+
+const sentStorageKey = "mensajeria_enviados_{{ session.get('sesion_id', '') }}";
+let telefonosEnviados = new Set();
+
+try {
+  const guardados = JSON.parse(localStorage.getItem(sentStorageKey) || "[]");
+  if (Array.isArray(guardados)) {
+    telefonosEnviados = new Set(guardados);
+  }
+} catch {
+  telefonosEnviados = new Set();
+}
+
+let filtroActivo = "todos";
+let textoBusq    = "";
+
+function actualizarContadorEnviados() {
+  if (contadorEnviados) {
+    contadorEnviados.textContent = telefonosEnviados.size;
+  }
+}
+
+function marcarFilaEnviada(btn, persistir = true) {
+  const telefono = (btn.dataset.telefono || "").trim();
+  const fila = btn.closest(".fila-contacto");
+  if (!telefono || !fila) return;
+
+  fila.classList.add("fila-enviada");
+
+  const estadoCell = fila.querySelector("td:nth-child(6)");
+  if (estadoCell && !estadoCell.querySelector(".badge-enviado")) {
+    const badge = document.createElement("span");
+    badge.className = "badge bg-primary ms-1 badge-enviado";
+    badge.textContent = "Enviado";
+    estadoCell.appendChild(badge);
+  }
+
+  btn.classList.remove("btn-success");
+  btn.classList.add("btn-outline-success");
+  btn.innerHTML = '<i class="bi bi-check2-circle me-1"></i>Enviado';
+
+  if (persistir && !telefonosEnviados.has(telefono)) {
+    telefonosEnviados.add(telefono);
+    localStorage.setItem(sentStorageKey, JSON.stringify([...telefonosEnviados]));
+  }
+
+  actualizarContadorEnviados();
+}
+
+function aplicarFiltros() {
+  let visible = 0;
+  filas.forEach(f => {
+    const estado = f.dataset.estado;
+    const texto  = f.textContent.toLowerCase();
+    const matchEstado = filtroActivo === "todos" || estado === filtroActivo;
+    const matchTexto  = textoBusq === "" || texto.includes(textoBusq);
+    if (matchEstado && matchTexto) {
+      f.style.display = "";
+      visible++;
+    } else {
+      f.style.display = "none";
+    }
+  });
+  if (contador) contador.textContent = visible;
+}
+
+filterBtns.forEach(btn => {
+  btn.addEventListener("click", () => {
+    filterBtns.forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    filtroActivo = btn.dataset.filter;
+    aplicarFiltros();
+  });
+});
+
+busqueda.addEventListener("input", () => {
+  textoBusq = busqueda.value.toLowerCase().trim();
+  aplicarFiltros();
+});
+
+whatsappBtns.forEach(btn => {
+  const telefono = (btn.dataset.telefono || "").trim();
+  if (telefono && telefonosEnviados.has(telefono)) {
+    marcarFilaEnviada(btn, false);
+  }
+
+  btn.addEventListener("click", () => {
+    marcarFilaEnviada(btn, true);
+  });
+});
+
+actualizarContadorEnviados();
+</script>
+{% endblock %}

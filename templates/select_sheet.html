@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Seleccionar Hoja{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-7 col-md-9">
+
+    <!-- Encabezado -->
+    <div class="text-center mb-4">
+      <i class="bi bi-journal-text text-primary" style="font-size:3rem;"></i>
+      <h1 class="h3 fw-bold mt-2">Seleccionar Hoja</h1>
+      <p class="text-muted mb-0">
+        Archivo: <strong>{{ archivo }}</strong>
+      </p>
+      <p class="text-muted small">
+        Se encontraron <strong>{{ hojas|length }}</strong> hoja(s). Elige la que quieres procesar.
+      </p>
+    </div>
+
+    <div class="card shadow-sm border-0">
+      <div class="card-body p-4">
+        <form action="{{ url_for('process') }}" method="POST">
+
+          <div class="mb-4">
+            <label class="form-label fw-semibold">
+              <i class="bi bi-list-ul me-1"></i>Hojas disponibles
+            </label>
+
+            <div class="sheet-list">
+              {% for hoja in hojas %}
+              <div class="form-check sheet-option">
+                <input class="form-check-input" type="radio" name="hoja"
+                       id="hoja_{{ loop.index }}" value="{{ hoja }}"
+                       {% if loop.first %}checked{% endif %} />
+                <label class="form-check-label w-100" for="hoja_{{ loop.index }}">
+                  <i class="bi bi-table me-2 text-primary"></i>
+                  {{ hoja }}
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+
+          <div class="d-grid gap-2 d-sm-flex justify-content-sm-between">
+            <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">
+              <i class="bi bi-arrow-left me-1"></i>Volver
+            </a>
+            <button type="submit" class="btn btn-primary">
+              <i class="bi bi-gear-fill me-2"></i>Procesar Hoja
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}

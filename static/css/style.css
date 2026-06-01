@@ -1,0 +1,143 @@
+/* ══════════════════════════════════════════════
+   Mensajería Masiva — Estilos principales
+   ══════════════════════════════════════════════ */
+
+:root {
+  --primary:   #0d6efd;
+  --success:   #198754;
+  --warning:   #ffc107;
+  --danger:    #dc3545;
+  --bg-body:   #f5f7fa;
+  --card-bg:   #ffffff;
+  --border-r:  .75rem;
+}
+
+/* ── Base ── */
+body {
+  background-color: var(--bg-body);
+  font-family: "Segoe UI", system-ui, sans-serif;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+main {
+  flex: 1;
+}
+
+/* ── Navbar ── */
+.navbar-brand {
+  font-size: 1.25rem;
+  letter-spacing: .02em;
+}
+
+/* ── Zona de arrastre (drop zone) ── */
+.drop-zone {
+  border: 2.5px dashed #b0c4de;
+  background: #f0f6ff;
+  cursor: pointer;
+  transition: border-color .2s, background .2s;
+  border-radius: var(--border-r);
+}
+
+.drop-zone:hover,
+.drop-zone--hover {
+  border-color: var(--primary);
+  background: #e0edff;
+}
+
+.drop-zone--active {
+  border-color: var(--success);
+  background: #e8f5e9;
+}
+
+/* ── Tarjetas generales ── */
+.card {
+  border-radius: var(--border-r);
+}
+
+/* ── Tarjetas de estadísticas ── */
+.stat-card {
+  border-radius: var(--border-r);
+  transition: transform .15s;
+}
+
+.stat-card:hover {
+  transform: translateY(-3px);
+}
+
+.stat-icon {
+  line-height: 1;
+}
+
+/* ── Lista de hojas ── */
+.sheet-list {
+  display: flex;
+  flex-direction: column;
+  gap: .4rem;
+  max-height: 380px;
+  overflow-y: auto;
+  padding: .5rem;
+  border: 1px solid #dee2e6;
+  border-radius: .5rem;
+  background: #fff;
+}
+
+.sheet-option {
+  padding: .55rem .9rem;
+  border-radius: .45rem;
+  border: 1px solid #e9ecef;
+  transition: background .15s;
+  cursor: pointer;
+}
+
+.sheet-option:hover {
+  background: #f0f6ff;
+  border-color: #b6d0ff;
+}
+
+.sheet-option input[type="radio"]:checked + label {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.sheet-option:has(input[type="radio"]:checked) {
+  background: #e7f0ff;
+  border-color: #80aaff;
+}
+
+/* ── Tabla de contactos ── */
+#tablaContactos th {
+  font-size: .8rem;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+#tablaContactos td {
+  font-size: .9rem;
+}
+
+#tablaContactos tr.fila-enviada td {
+  background: #e9f7ef;
+}
+
+/* ── Botones de filtro activo ── */
+.filter-btn.active {
+  font-weight: 600;
+}
+
+/* ── Badges ── */
+.badge {
+  font-size: .75rem;
+  padding: .35em .6em;
+}
+
+/* ── Footer ── */
+.footer {
+  font-size: .82rem;
+}
+
+/* ── Utilidades ── */
+.font-monospace {
+  font-family: "Consolas", "Courier New", monospace;
+}
