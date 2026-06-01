@@ -39,6 +39,7 @@ ALLOWED_EXTENSIONS = {"xlsx", "xls"}
 
 app = Flask(__name__)
 SECRET_KEY = os.getenv("SECRET_KEY", "").strip()
+# En produccion conviene configurar SECRET_KEY en Railway, pero la app no debe caerse si falta.
 if SECRET_KEY:
     app.secret_key = SECRET_KEY
 elif os.getenv("RAILWAY_ENVIRONMENT"):
