@@ -7,8 +7,8 @@ from flask import (
     Flask, render_template, request, redirect,
     url_for, session, flash, send_file, jsonify
 )
+from sqlalchemy import inspect, text
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import text
 from werkzeug.utils import secure_filename
 
 # ─────────────────────────── Configuración ───────────────────────────
@@ -17,15 +17,31 @@ UPLOAD_DIR  = os.path.join(BASE_DIR, "uploads")
 EXPORT_DIR  = os.path.join(BASE_DIR, "exports")
 DB_PATH     = os.path.join(BASE_DIR, "database", "mensajeria.db")
 
+
+def obtener_database_uri() -> str:
+    database_url = os.getenv("DATABASE_URL", "").strip()
+    if database_url:
+        # Railway puede exponer postgres://; SQLAlchemy espera postgresql://
+        if database_url.startswith("postgres://"):
+            database_url = database_url.replace("postgres://", "postgresql+psycopg2://", 1)
+        elif database_url.startswith("postgresql://"):
+            database_url = database_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+        return database_url
+
+    return f"sqlite:///{DB_PATH}"
+
 ALLOWED_EXTENSIONS = {"xlsx", "xls"}
 
 app = Flask(__name__)
-app.secret_key = os.urandom(32)
+app.secret_key = os.getenv("SECRET_KEY", "mensajeria-masiva-dev-key")
 
-app.config["SQLALCHEMY_DATABASE_URI"]        = f"sqlite:///{DB_PATH}"
+app.config["SQLALCHEMY_DATABASE_URI"]        = obtener_database_uri()
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["UPLOAD_FOLDER"]                  = UPLOAD_DIR
 app.config["MAX_CONTENT_LENGTH"]             = 16 * 1024 * 1024  # 16 MB
+app.config["SQLALCHEMY_ENGINE_OPTIONS"]      = {
+    "pool_pre_ping": True,
+}
 
 db = SQLAlchemy(app)
 
@@ -59,9 +75,11 @@ class ContactoTemporal(db.Model):
 
 with app.app_context():
     db.create_all()
-    # Migración ligera para bases SQLite existentes sin la nueva columna.
-    columnas = db.session.execute(text("PRAGMA table_info(contactos_temporales)")).fetchall()
-    nombres_columnas = {c[1] for c in columnas}
+    inspector = inspect(db.engine)
+    nombres_columnas = {
+        c["name"]
+        for c in inspector.get_columns("contactos_temporales")
+    } if inspector.has_table("contactos_temporales") else set()
     if "documento_madre" not in nombres_columnas:
         db.session.execute(text("ALTER TABLE contactos_temporales ADD COLUMN documento_madre VARCHAR(100)"))
         db.session.commit()

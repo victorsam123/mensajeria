@@ -30,8 +30,15 @@ Luego abre tu navegador en: `http://127.0.0.1:5000`
 2. Crea un nuevo proyecto en Railway y conecta el repositorio.
 3. Railway detectará Python y usará `gunicorn` con el `Procfile`.
 4. No necesitas configurar un comando de inicio manual.
+5. Agrega un servicio de PostgreSQL en Railway y enlaza su `DATABASE_URL` al servicio de la app.
 
-Si quieres mantener los datos entre reinicios, agrega un volumen o conecta una base de datos externa. La versión actual usa SQLite local para funcionar sin configuración adicional.
+Variables recomendadas:
+
+- `DATABASE_URL`: la URL del Postgres de Railway.
+- `SECRET_KEY`: una cadena larga y fija para mantener las sesiones estables.
+- `FLASK_DEBUG=0`: desactiva debug en producción.
+
+Con esto la app deja de depender de SQLite local y los datos quedan persistidos en la base externa.
 
 ## Flujo de uso
 
