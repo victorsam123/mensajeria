@@ -4,6 +4,7 @@ import uuid
 import pandas as pd
 from functools import wraps
 from datetime import datetime
+from urllib.parse import quote
 from flask import (
     Flask, g, render_template, request, redirect,
     url_for, session, flash, send_file
@@ -129,6 +130,23 @@ class RegistroEnvioUsuario(db.Model):
     archivo_origen  = db.Column(db.String(255), index=True)
     hoja_origen     = db.Column(db.String(255), index=True)
     creado_en       = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class RegistroMensajeWhatsApp(db.Model):
+    __tablename__ = "registros_mensaje_whatsapp"
+
+    id                = db.Column(db.Integer, primary_key=True)
+    usuario_id        = db.Column(db.Integer, db.ForeignKey("usuarios.id"), nullable=False, index=True)
+    username          = db.Column(db.String(80), nullable=False, index=True)
+    sesion_usuario_id = db.Column(db.Integer, db.ForeignKey("sesiones_usuario.id"), index=True)
+    contacto_id       = db.Column(db.Integer, index=True)
+    fecha             = db.Column(db.Date, nullable=False, index=True)
+    hora              = db.Column(db.DateTime, nullable=False)
+    nombre_madre      = db.Column(db.String(200))
+    telefono          = db.Column(db.String(50), nullable=False)
+    estado            = db.Column(db.String(30), nullable=False, default="Mensaje preparado")
+    mensaje           = db.Column(db.Text, nullable=False)
+    creado_en         = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 def ensure_admin_user() -> None:
@@ -336,6 +354,68 @@ def usuarios_activos_hoy() -> int:
     ).count()
 
 
+def total_mensajes_preparados(fecha, user: Usuario | None = None) -> int:
+    query = RegistroMensajeWhatsApp.query.filter_by(fecha=fecha)
+    if user and not user.is_admin:
+        query = query.filter_by(usuario_id=user.id)
+    elif user:
+        query = query.filter_by(usuario_id=user.id)
+    return query.count()
+
+
+def total_mensajes_preparados_hoy(user: Usuario | None = None) -> int:
+    return total_mensajes_preparados(fecha_actual(), user)
+
+
+def totales_mensajes_por_usuario(fecha, user: Usuario):
+    query = db.session.query(
+        RegistroMensajeWhatsApp.username,
+        func.count(RegistroMensajeWhatsApp.id),
+    ).filter(
+        RegistroMensajeWhatsApp.fecha == fecha
+    )
+    if not user.is_admin:
+        query = query.filter(RegistroMensajeWhatsApp.usuario_id == user.id)
+
+    filas = query.group_by(
+        RegistroMensajeWhatsApp.username
+    ).order_by(
+        RegistroMensajeWhatsApp.username.asc()
+    ).all()
+
+    return [
+        {
+            "username": username,
+            "total": total or 0,
+        }
+        for username, total in filas
+    ]
+
+
+def saludo_institucional(ahora: datetime | None = None) -> str:
+    ahora = ahora or datetime.now()
+    return "Buenos días" if ahora.hour < 12 else "Buenas tardes"
+
+
+def construir_mensaje_whatsapp(nombre_madre: str, ahora: datetime | None = None) -> str:
+    nombre = (nombre_madre or "").strip() or "madre"
+    saludo = saludo_institucional(ahora)
+    return (
+        f"{saludo} Sr./Sra. {nombre}:\n\n"
+        "Le saludo desde el Servicio de Vacunación del Hospital Regional de Ciudad del Este.\n\n"
+        "Nos comunicamos para recordarle que su hijo/a registra una vacuna pendiente contra el Sarampión "
+        "y otras vacunas necesarias para mantener su esquema de vacunación al día.\n\n"
+        "Puede acercarse al Hospital Regional de Ciudad del Este de lunes a lunes, en el horario de 07:00 a 17:00 horas.\n\n"
+        "Si lo prefiere, también puede enviarnos su ubicación para coordinar una visita domiciliaria.\n\n"
+        "En caso de que su hijo/a ya cuente con todas las vacunas al día, favor omitir este mensaje.\n\n"
+        "Muchas gracias."
+    )
+
+
+def normalizar_telefono_whatsapp(telefono: str) -> str:
+    return re.sub(r"\D", "", telefono or "")
+
+
 @app.before_request
 def load_current_user():
     g.current_user = get_current_user()
@@ -523,6 +603,7 @@ def index():
         resumen_general=resumen_general_hoy() if current_user.is_admin else None,
         totales_por_usuario=totales_por_usuario_hoy() if current_user.is_admin else [],
         usuarios_activos=usuarios_activos_hoy() if current_user.is_admin else 0,
+        mensajes_enviados_hoy=total_mensajes_preparados_hoy(None if current_user.is_admin else current_user),
     )
 
 
@@ -696,7 +777,7 @@ def users():
 
 
 @app.route("/reporte-diario")
-@admin_required
+@login_required
 def reporte_diario():
     fecha_raw = request.args.get("fecha", "").strip()
     try:
@@ -704,119 +785,18 @@ def reporte_diario():
     except ValueError:
         fecha_reporte = fecha_actual()
 
-    usuario_id = request.args.get("usuario_id", "").strip()
-    estado = request.args.get("estado", "").strip()
-    archivo = request.args.get("archivo", "").strip()
-    hoja = request.args.get("hoja", "").strip()
-
-    query = RegistroEnvioUsuario.query.filter(RegistroEnvioUsuario.fecha == fecha_reporte)
-    if usuario_id.isdigit():
-        query = query.filter(RegistroEnvioUsuario.usuario_id == int(usuario_id))
-    if estado:
-        query = query.filter(RegistroEnvioUsuario.estado == estado)
-    if archivo:
-        query = query.filter(RegistroEnvioUsuario.archivo_origen == archivo)
-    if hoja:
-        query = query.filter(RegistroEnvioUsuario.hoja_origen == hoja)
-
-    registros = query.order_by(
-        RegistroEnvioUsuario.username.asc(),
-        RegistroEnvioUsuario.hora.asc(),
-    ).all()
-
-    sesiones_ids = sorted({r.sesion_id for r in registros})
-    sesiones = {
-        s.id: s
-        for s in SesionUsuario.query.filter(SesionUsuario.id.in_(sesiones_ids)).all()
-    } if sesiones_ids else {}
-
-    grupos = {}
-    for registro in registros:
-        grupo = grupos.setdefault(registro.sesion_id, {
-            "sesion": sesiones.get(registro.sesion_id),
-            "username": registro.username,
-            "archivos": set(),
-            "hojas": set(),
-            "total": 0,
-            "validos": 0,
-            "sin_telefono": 0,
-            "duplicados": 0,
-        })
-        if registro.archivo_origen:
-            grupo["archivos"].add(registro.archivo_origen)
-        if registro.hoja_origen:
-            grupo["hojas"].add(registro.hoja_origen)
-        grupo["total"] += 1
-        if registro.estado == "valido":
-            grupo["validos"] += 1
-        elif registro.estado == "sin_telefono":
-            grupo["sin_telefono"] += 1
-        elif registro.estado == "duplicado":
-            grupo["duplicados"] += 1
-
-    filas_reporte = []
-    for grupo in grupos.values():
-        filas_reporte.append({
-            "username": grupo["username"],
-            "hora_inicio": grupo["sesion"].hora_inicio if grupo["sesion"] else None,
-            "hora_fin": grupo["sesion"].hora_fin if grupo["sesion"] else None,
-            "total": grupo["total"],
-            "validos": grupo["validos"],
-            "sin_telefono": grupo["sin_telefono"],
-            "duplicados": grupo["duplicados"],
-            "archivo": ", ".join(sorted(grupo["archivos"])) or "-",
-            "hoja": ", ".join(sorted(grupo["hojas"])) or "-",
-        })
-
-    resumen = {
-        "total": sum(f["total"] for f in filas_reporte),
-        "validos": sum(f["validos"] for f in filas_reporte),
-        "sin_telefono": sum(f["sin_telefono"] for f in filas_reporte),
-        "duplicados": sum(f["duplicados"] for f in filas_reporte),
-        "usuarios_activos": SesionUsuario.query.filter(
-            SesionUsuario.fecha == fecha_reporte,
-            SesionUsuario.hora_fin.is_(None),
-        ).count(),
-    }
-
-    total_por_usuario = {}
-    for fila in filas_reporte:
-        total_por_usuario[fila["username"]] = total_por_usuario.get(fila["username"], 0) + fila["total"]
-
-    usuarios = Usuario.query.order_by(Usuario.username.asc()).all()
-    archivos = [
-        row[0] for row in db.session.query(RegistroEnvioUsuario.archivo_origen)
-        .filter(RegistroEnvioUsuario.archivo_origen.isnot(None))
-        .distinct()
-        .order_by(RegistroEnvioUsuario.archivo_origen.asc())
-        .all()
-        if row[0]
-    ]
-    hojas = [
-        row[0] for row in db.session.query(RegistroEnvioUsuario.hoja_origen)
-        .filter(RegistroEnvioUsuario.hoja_origen.isnot(None))
-        .distinct()
-        .order_by(RegistroEnvioUsuario.hoja_origen.asc())
-        .all()
-        if row[0]
-    ]
+    current_user = get_current_user()
+    filas_reporte = totales_mensajes_por_usuario(fecha_reporte, current_user)
+    total_general = sum(fila["total"] for fila in filas_reporte)
 
     return render_template(
         "reporte_diario.html",
         fecha_reporte=fecha_reporte,
         filtros={
             "fecha": fecha_reporte.strftime("%Y-%m-%d"),
-            "usuario_id": usuario_id,
-            "estado": estado,
-            "archivo": archivo,
-            "hoja": hoja,
         },
-        usuarios=usuarios,
-        archivos=archivos,
-        hojas=hojas,
         filas=filas_reporte,
-        resumen=resumen,
-        total_por_usuario=total_por_usuario,
+        total_general=total_general,
     )
 
 
@@ -1022,6 +1002,47 @@ def preview():
         archivo=session.get("archivo"),
         hoja=session.get("hoja"),
     )
+
+
+@app.route("/whatsapp/<int:contacto_id>")
+@login_required
+def preparar_whatsapp(contacto_id: int):
+    sesion_id = session.get("sesion_id")
+    contacto = db.session.get(ContactoTemporal, contacto_id)
+    if not contacto or contacto.sesion_id != sesion_id:
+        flash("Contacto no disponible para esta sesión.", "danger")
+        return redirect(url_for("preview") if sesion_id else url_for("index"))
+
+    if contacto.estado != "valido" or not contacto.telefono:
+        flash("Solo se puede preparar WhatsApp para contactos válidos con teléfono.", "warning")
+        return redirect(url_for("preview"))
+
+    telefono = normalizar_telefono_whatsapp(contacto.telefono)
+    if not telefono:
+        flash("El teléfono del contacto no es válido para WhatsApp.", "warning")
+        return redirect(url_for("preview"))
+
+    current_user = get_current_user()
+    ahora = datetime.now()
+    mensaje = construir_mensaje_whatsapp(contacto.nombre, ahora)
+    sesion_usuario = obtener_sesion_usuario_actual()
+
+    db.session.add(RegistroMensajeWhatsApp(
+        usuario_id=current_user.id,
+        username=current_user.username,
+        sesion_usuario_id=sesion_usuario.id if sesion_usuario else None,
+        contacto_id=contacto.id,
+        fecha=ahora.date(),
+        hora=ahora,
+        nombre_madre=contacto.nombre,
+        telefono=telefono,
+        estado="Mensaje preparado",
+        mensaje=mensaje,
+    ))
+    db.session.commit()
+
+    mensaje_codificado = quote(mensaje)
+    return redirect(f"https://wa.me/{telefono}?text={mensaje_codificado}")
 
 
 @app.route("/export/<fmt>")

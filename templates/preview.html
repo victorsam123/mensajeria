@@ -150,7 +150,7 @@
           <td class="text-center">
             {% if c.estado == "valido" and c.telefono %}
               <a
-                href="https://api.whatsapp.com/send?phone={{ c.telefono|replace('+', '') }}"
+                href="{{ url_for('preparar_whatsapp', contacto_id=c.id) }}"
                 class="btn btn-sm btn-success whatsapp-btn"
                 data-telefono="{{ c.telefono|replace('+', '') }}"
                 target="_blank"
