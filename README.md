@@ -24,6 +24,15 @@ python app.py
 
 Luego abre tu navegador en: `http://127.0.0.1:5000`
 
+## Despliegue en Railway
+
+1. Sube este repositorio a GitHub.
+2. Crea un nuevo proyecto en Railway y conecta el repositorio.
+3. Railway detectará Python y usará `gunicorn` con el `Procfile`.
+4. No necesitas configurar un comando de inicio manual.
+
+Si quieres mantener los datos entre reinicios, agrega un volumen o conecta una base de datos externa. La versión actual usa SQLite local para funcionar sin configuración adicional.
+
 ## Flujo de uso
 
 | Paso | Acción |
