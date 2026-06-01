@@ -39,9 +39,12 @@ ALLOWED_EXTENSIONS = {"xlsx", "xls"}
 
 app = Flask(__name__)
 SECRET_KEY = os.getenv("SECRET_KEY", "").strip()
-if not SECRET_KEY and os.getenv("RAILWAY_ENVIRONMENT"):
-    raise RuntimeError("SECRET_KEY es obligatoria en Railway/producción.")
-app.secret_key = SECRET_KEY or "mensajeria-masiva-dev-key"
+if SECRET_KEY:
+    app.secret_key = SECRET_KEY
+elif os.getenv("RAILWAY_ENVIRONMENT"):
+    app.secret_key = os.urandom(32).hex()
+else:
+    app.secret_key = "mensajeria-masiva-dev-key"
 
 app.config["SQLALCHEMY_DATABASE_URI"]        = obtener_database_uri()
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
