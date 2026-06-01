@@ -18,6 +18,8 @@ BASE_DIR    = os.path.abspath(os.path.dirname(__file__))
 UPLOAD_DIR  = os.path.join(BASE_DIR, "uploads")
 EXPORT_DIR  = os.path.join(BASE_DIR, "exports")
 DB_PATH     = os.path.join(BASE_DIR, "database", "mensajeria.db")
+ADMIN_USERNAME = "admin"
+ADMIN_DEFAULT_PASSWORD = os.getenv("ADMIN_PASSWORD", "513625")
 
 
 def obtener_database_uri() -> str:
@@ -81,6 +83,7 @@ class Usuario(db.Model):
     id            = db.Column(db.Integer, primary_key=True)
     username      = db.Column(db.String(80), nullable=False, unique=True, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
+    is_admin      = db.Column(db.Boolean, default=False)
     activo        = db.Column(db.Boolean, default=True)
     creado_en     = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -91,16 +94,51 @@ class Usuario(db.Model):
         return check_password_hash(self.password_hash, password)
 
 
+def ensure_admin_user() -> None:
+    admin = Usuario.query.filter_by(username=ADMIN_USERNAME).first()
+    if not admin:
+        admin = Usuario(username=ADMIN_USERNAME, is_admin=True, activo=True)
+        admin.set_password(ADMIN_DEFAULT_PASSWORD)
+        db.session.add(admin)
+        db.session.commit()
+        return
+
+    changed = False
+    if not admin.is_admin:
+        admin.is_admin = True
+        changed = True
+    if not admin.activo:
+        admin.activo = True
+        changed = True
+    # Se mantiene esta contraseña para la cuenta admin como pidió el usuario.
+    if not admin.check_password(ADMIN_DEFAULT_PASSWORD):
+        admin.set_password(ADMIN_DEFAULT_PASSWORD)
+        changed = True
+    if changed:
+        db.session.commit()
+
+
 with app.app_context():
     db.create_all()
     inspector = inspect(db.engine)
-    nombres_columnas = {
+
+    nombres_columnas_contactos = {
         c["name"]
         for c in inspector.get_columns("contactos_temporales")
     } if inspector.has_table("contactos_temporales") else set()
-    if "documento_madre" not in nombres_columnas:
+    if "documento_madre" not in nombres_columnas_contactos:
         db.session.execute(text("ALTER TABLE contactos_temporales ADD COLUMN documento_madre VARCHAR(100)"))
         db.session.commit()
+
+    nombres_columnas_usuarios = {
+        c["name"]
+        for c in inspector.get_columns("usuarios")
+    } if inspector.has_table("usuarios") else set()
+    if "is_admin" not in nombres_columnas_usuarios:
+        db.session.execute(text("ALTER TABLE usuarios ADD COLUMN is_admin BOOLEAN DEFAULT 0"))
+        db.session.commit()
+
+    ensure_admin_user()
 
 
 # ─────────────────────────── Utilidades ──────────────────────────────
@@ -128,6 +166,21 @@ def login_required(func):
         if not get_current_user():
             flash("Debes iniciar sesión para continuar.", "warning")
             return redirect(url_for("login", next=request.path))
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+def admin_required(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        user = get_current_user()
+        if not user:
+            flash("Debes iniciar sesión para continuar.", "warning")
+            return redirect(url_for("login", next=request.path))
+        if not user.is_admin:
+            flash("Solo el administrador puede realizar esta acción.", "danger")
+            return redirect(url_for("index"))
         return func(*args, **kwargs)
 
     return wrapper
@@ -351,14 +404,8 @@ def login():
 
 
 @app.route("/register", methods=["GET", "POST"])
+@admin_required
 def register():
-    total_users = Usuario.query.count()
-    puede_registrar = total_users == 0 or bool(g.get("current_user"))
-
-    if not puede_registrar:
-        flash("Solo un usuario autenticado puede crear más usuarios.", "warning")
-        return redirect(url_for("login"))
-
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
@@ -377,17 +424,10 @@ def register():
             flash("Ese usuario ya existe.", "danger")
             return redirect(url_for("register"))
 
-        user = Usuario(username=username)
+        user = Usuario(username=username, is_admin=False)
         user.set_password(password)
         db.session.add(user)
         db.session.commit()
-
-        if total_users == 0:
-            session["user_id"] = user.id
-            session["username"] = user.username
-            flash("Usuario inicial creado correctamente.", "success")
-            return redirect(url_for("index"))
-
         flash("Usuario creado correctamente.", "success")
         return redirect(url_for("users"))
 
@@ -404,35 +444,101 @@ def logout():
 
 
 @app.route("/users", methods=["GET", "POST"])
-@login_required
+@admin_required
 def users():
     if request.method == "POST":
-        username = request.form.get("username", "").strip()
-        password = request.form.get("password", "")
-        confirm  = request.form.get("confirm_password", "")
+        action = request.form.get("action", "create")
 
-        if len(username) < 3:
-            flash("El usuario debe tener al menos 3 caracteres.", "warning")
-            return redirect(url_for("users"))
-        if len(password) < 6:
-            flash("La contraseña debe tener al menos 6 caracteres.", "warning")
-            return redirect(url_for("users"))
-        if password != confirm:
-            flash("Las contraseñas no coinciden.", "warning")
-            return redirect(url_for("users"))
-        if Usuario.query.filter_by(username=username).first():
-            flash("Ese usuario ya existe.", "danger")
+        if action == "create":
+            username = request.form.get("username", "").strip()
+            password = request.form.get("password", "")
+            confirm  = request.form.get("confirm_password", "")
+
+            if len(username) < 3:
+                flash("El usuario debe tener al menos 3 caracteres.", "warning")
+                return redirect(url_for("users"))
+            if len(password) < 6:
+                flash("La contraseña debe tener al menos 6 caracteres.", "warning")
+                return redirect(url_for("users"))
+            if password != confirm:
+                flash("Las contraseñas no coinciden.", "warning")
+                return redirect(url_for("users"))
+            if Usuario.query.filter_by(username=username).first():
+                flash("Ese usuario ya existe.", "danger")
+                return redirect(url_for("users"))
+
+            user = Usuario(username=username, is_admin=False)
+            user.set_password(password)
+            db.session.add(user)
+            db.session.commit()
+            flash("Nuevo usuario creado correctamente.", "success")
             return redirect(url_for("users"))
 
-        user = Usuario(username=username)
-        user.set_password(password)
-        db.session.add(user)
-        db.session.commit()
-        flash("Nuevo usuario creado correctamente.", "success")
+        user_id = request.form.get("user_id", "").strip()
+        if not user_id.isdigit():
+            flash("Usuario inválido.", "danger")
+            return redirect(url_for("users"))
+
+        target = db.session.get(Usuario, int(user_id))
+        if not target:
+            flash("Usuario no encontrado.", "danger")
+            return redirect(url_for("users"))
+
+        current_user = get_current_user()
+        if current_user and target.id == current_user.id:
+            flash("No puedes modificar tu propia cuenta de administrador.", "warning")
+            return redirect(url_for("users"))
+
+        if target.is_admin:
+            flash("La cuenta administrador no se puede modificar desde aquí.", "warning")
+            return redirect(url_for("users"))
+
+        if action == "toggle":
+            target.activo = not target.activo
+            db.session.commit()
+            estado = "habilitado" if target.activo else "deshabilitado"
+            flash(f"Usuario {estado} correctamente.", "success")
+            return redirect(url_for("users"))
+
+        if action == "delete":
+            db.session.delete(target)
+            db.session.commit()
+            flash("Usuario eliminado correctamente.", "success")
+            return redirect(url_for("users"))
+
+        if action == "update":
+            username = request.form.get("username", "").strip()
+            new_password = request.form.get("new_password", "")
+
+            if len(username) < 3:
+                flash("El usuario debe tener al menos 3 caracteres.", "warning")
+                return redirect(url_for("users"))
+
+            existe = Usuario.query.filter(Usuario.username == username, Usuario.id != target.id).first()
+            if existe:
+                flash("Ese usuario ya existe.", "danger")
+                return redirect(url_for("users"))
+
+            target.username = username
+            if new_password:
+                if len(new_password) < 6:
+                    flash("La nueva contraseña debe tener al menos 6 caracteres.", "warning")
+                    return redirect(url_for("users"))
+                target.set_password(new_password)
+
+            db.session.commit()
+            flash("Usuario actualizado correctamente.", "success")
+            return redirect(url_for("users"))
+
+        flash("Acción no soportada.", "danger")
         return redirect(url_for("users"))
 
     usuarios = Usuario.query.order_by(Usuario.creado_en.desc()).all()
-    return render_template("users.html", usuarios=usuarios)
+    return render_template(
+        "users.html",
+        usuarios=usuarios,
+        total_usuarios=len(usuarios),
+    )
 
 
 @app.route("/upload", methods=["POST"])

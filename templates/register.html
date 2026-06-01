@@ -2,6 +2,7 @@
 {% block title %}Crear Usuario{% endblock %}
 
 {% block content %}
+{% if current_user and current_user.is_admin %}
 <div class="row justify-content-center">
   <div class="col-md-7 col-lg-6">
     <div class="card shadow-sm border-0">
@@ -36,4 +37,7 @@
     </div>
   </div>
 </div>
+{% else %}
+<div class="alert alert-danger">Solo el administrador puede realizar esta acción.</div>
+{% endif %}
 {% endblock %}
