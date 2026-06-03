@@ -2,6 +2,7 @@ import os
 import re
 import uuid
 import pandas as pd
+from openpyxl import load_workbook
 from functools import wraps
 from datetime import datetime
 from urllib.parse import quote
@@ -70,6 +71,7 @@ class ContactoTemporal(db.Model):
     nombre      = db.Column(db.String(200))
     apellido    = db.Column(db.String(200))
     documento_madre = db.Column(db.String(100))
+    edad_anios  = db.Column(db.String(50))
     telefono    = db.Column(db.String(50))
     estado      = db.Column(db.String(20), default="valido")   # valido | duplicado | sin_telefono
     creado_en   = db.Column(db.DateTime, default=datetime.utcnow)
@@ -80,6 +82,7 @@ class ContactoTemporal(db.Model):
             "nombre":   self.nombre   or "",
             "apellido": self.apellido or "",
             "documento_madre": self.documento_madre or "",
+            "edad_anios": self.edad_anios or "",
             "telefono": self.telefono or "",
             "estado":   self.estado,
         }
@@ -132,6 +135,7 @@ class RegistroEnvioUsuario(db.Model):
     nombre          = db.Column(db.String(200))
     apellido        = db.Column(db.String(200))
     documento_madre = db.Column(db.String(100))
+    edad_anios      = db.Column(db.String(50))
     telefono        = db.Column(db.String(50))
     estado          = db.Column(db.String(20), nullable=False, index=True)
     archivo_origen  = db.Column(db.String(255), index=True)
@@ -181,6 +185,17 @@ with app.app_context():
     } if inspector.has_table("contactos_temporales") else set()
     if "documento_madre" not in nombres_columnas_contactos:
         db.session.execute(text("ALTER TABLE contactos_temporales ADD COLUMN documento_madre VARCHAR(100)"))
+        db.session.commit()
+    if "edad_anios" not in nombres_columnas_contactos:
+        db.session.execute(text("ALTER TABLE contactos_temporales ADD COLUMN edad_anios VARCHAR(50)"))
+        db.session.commit()
+
+    nombres_columnas_registros_envio = {
+        c["name"]
+        for c in inspector.get_columns("registros_envio_usuario")
+    } if inspector.has_table("registros_envio_usuario") else set()
+    if "registros_envio_usuario" in inspector.get_table_names() and "edad_anios" not in nombres_columnas_registros_envio:
+        db.session.execute(text("ALTER TABLE registros_envio_usuario ADD COLUMN edad_anios VARCHAR(50)"))
         db.session.commit()
 
     nombres_columnas_usuarios = {
@@ -443,6 +458,10 @@ KEYWORDS = {
         "madre documento", "documento madre", "doc madre",
         "documento de la madre", "madre doc", "cedula madre", "cédula madre",
     ],
+    "edad_anios": [
+        "edadaños", "edad años", "edad anios", "edad anos",
+        "edad_anios", "edad_anos", "edad", "años", "anos",
+    ],
     "telefono": [
         "telefono", "teléfono", "celular", "cel", "movil", "móvil",
         "numero", "número", "whatsapp", "contacto", "tel",
@@ -515,7 +534,7 @@ def _leer_hoja_detectando_header(ruta: str, hoja: str) -> pd.DataFrame:
             # Si al menos una celda contiene palabra clave de encabezado real
             row_lower = " ".join(v.lower() for v in valores)
             if any(kw in row_lower for kw in
-                   ["nombre", "apellido", "telefono", "id persona", "documento", "celular"]):
+                   ["nombre", "apellido", "telefono", "id persona", "documento", "celular", "edad"]):
                 header_row = idx
                 break
 
@@ -526,12 +545,74 @@ def _leer_hoja_detectando_header(ruta: str, hoja: str) -> pd.DataFrame:
     return df
 
 
+def obtener_hojas_activas(ruta: str) -> list[str]:
+    """Devuelve solo hojas visibles/activas del archivo Excel."""
+    wb = load_workbook(ruta, read_only=True, data_only=True)
+    try:
+        return [ws.title for ws in wb.worksheets if ws.sheet_state == "visible"]
+    finally:
+        wb.close()
+
+
+def ordenar_valores_texto(valores: list[str]) -> list[str]:
+    def clave(valor: str):
+        texto = str(valor).strip()
+        try:
+            return (0, float(texto.replace(",", ".")))
+        except ValueError:
+            return (1, texto.lower())
+
+    return sorted({str(v).strip() for v in valores if str(v).strip()}, key=clave)
+
+
+def analizar_hoja_excel(ruta: str, hoja: str) -> dict:
+    """Obtiene columnas y metadatos de una hoja antes de procesarla."""
+    info = {
+        "nombre": hoja,
+        "columnas": [],
+        "filas": 0,
+        "col_nombre": "",
+        "col_apellido": "",
+        "col_doc_madre": "",
+        "col_edad_anios": "",
+        "col_telefono": "",
+        "edad_valores": [],
+        "error": "",
+    }
+
+    try:
+        df = _leer_hoja_detectando_header(ruta, hoja)
+    except Exception as exc:
+        info["error"] = str(exc)
+        return info
+
+    columnas = list(df.columns)
+    col_edad_anios = detectar_columna(columnas, "edad_anios") or ""
+    info.update({
+        "columnas": columnas,
+        "filas": len(df),
+        "col_nombre": detectar_columna(columnas, "nombre") or "",
+        "col_apellido": detectar_columna(columnas, "apellido") or "",
+        "col_doc_madre": detectar_columna(columnas, "documento_madre") or "",
+        "col_edad_anios": col_edad_anios,
+        "col_telefono": detectar_columna(columnas, "telefono") or "",
+    })
+
+    if col_edad_anios:
+        info["edad_valores"] = ordenar_valores_texto(
+            df[col_edad_anios].dropna().astype(str).map(str.strip).tolist()
+        )
+
+    return info
+
+
 def procesar_dataframe(
     df: pd.DataFrame,
     col_nombre: str,
     col_apellido: str,
     col_telefono: str,
     col_doc_madre: str = "",
+    col_edad_anios: str = "",
 ):
     """
     Filtra, limpia y devuelve una lista de dicts con estadísticas.
@@ -546,6 +627,7 @@ def procesar_dataframe(
         nombre   = limpiar_texto(row.get(col_nombre,   ""))
         apellido = limpiar_texto(row.get(col_apellido, ""))
         documento_madre = limpiar_texto(row.get(col_doc_madre, "")) if col_doc_madre else ""
+        edad_anios = limpiar_texto(row.get(col_edad_anios, "")) if col_edad_anios else ""
         telefono = normalizar_telefono(row.get(col_telefono, ""))
 
         if not telefono:
@@ -554,6 +636,7 @@ def procesar_dataframe(
                 "nombre":   nombre,
                 "apellido": apellido,
                 "documento_madre": documento_madre,
+                "edad_anios": edad_anios,
                 "telefono": telefono,
                 "estado":   "sin_telefono",
             })
@@ -565,6 +648,7 @@ def procesar_dataframe(
                 "nombre":   nombre,
                 "apellido": apellido,
                 "documento_madre": documento_madre,
+                "edad_anios": edad_anios,
                 "telefono": telefono,
                 "estado":   "duplicado",
             })
@@ -575,6 +659,7 @@ def procesar_dataframe(
             "nombre":   nombre,
             "apellido": apellido,
             "documento_madre": documento_madre,
+            "edad_anios": edad_anios,
             "telefono": telefono,
             "estado":   "valido",
         })
@@ -798,6 +883,42 @@ def reporte_diario():
     )
 
 
+def limpiar_archivo_actual() -> None:
+    """Limpia solo los datos temporales del archivo cargado actualmente."""
+    sesion_id = session.get("sesion_id")
+    if sesion_id:
+        ContactoTemporal.query.filter_by(sesion_id=sesion_id).delete()
+        db.session.commit()
+
+    ruta = session.get("ruta")
+    if ruta:
+        try:
+            ruta_abs = os.path.abspath(ruta)
+            uploads_abs = os.path.abspath(app.config["UPLOAD_FOLDER"])
+            if os.path.commonpath([ruta_abs, uploads_abs]) == uploads_abs and os.path.exists(ruta_abs):
+                os.remove(ruta_abs)
+        except (OSError, ValueError):
+            pass
+
+    claves_temporales = (
+        "sesion_id",
+        "archivo",
+        "ruta",
+        "hojas",
+        "hoja",
+        "stats",
+        "columnas",
+        "col_nombre",
+        "col_apellido",
+        "col_doc_madre",
+        "col_edad_anios",
+        "col_telefono",
+        "edad_valores",
+    )
+    for clave in claves_temporales:
+        session.pop(clave, None)
+
+
 @app.route("/upload", methods=["POST"])
 @login_required
 def upload():
@@ -815,14 +936,16 @@ def upload():
         flash("Solo se permiten archivos .xlsx o .xls.", "danger")
         return redirect(url_for("index"))
 
+    if session.get("sesion_id") or session.get("archivo"):
+        limpiar_archivo_actual()
+
     nombre_seguro = secure_filename(archivo.filename)
     ruta          = os.path.join(app.config["UPLOAD_FOLDER"], nombre_seguro)
     archivo.save(ruta)
 
-    # Leer nombres de hojas
+    # Leer nombres de hojas visibles/activas
     try:
-        xls   = pd.ExcelFile(ruta, engine="openpyxl")
-        hojas = xls.sheet_names
+        hojas = obtener_hojas_activas(ruta)
     except Exception as e:
         flash(f"Error al leer el archivo: {e}", "danger")
         return redirect(url_for("index"))
@@ -834,6 +957,7 @@ def upload():
     session["archivo"]    = nombre_seguro
     session["ruta"]       = ruta
     session["hojas"]      = hojas
+    flash("Nuevo archivo cargado correctamente.", "success")
 
     return redirect(url_for("select_sheet"))
 
@@ -845,10 +969,19 @@ def select_sheet():
         flash("Primero debes cargar un archivo.", "warning")
         return redirect(url_for("index"))
 
+    ruta = session.get("ruta")
+    if not ruta or not os.path.exists(ruta):
+        flash("El archivo ya no estÃ¡ disponible. CÃ¡rgalo nuevamente.", "danger")
+        return redirect(url_for("index"))
+
+    hojas_info = [analizar_hoja_excel(ruta, hoja) for hoja in session.get("hojas", [])]
+
     return render_template(
         "select_sheet.html",
         archivo=session.get("archivo"),
         hojas=session.get("hojas"),
+        hojas_info=hojas_info,
+        first_info=hojas_info[0] if hojas_info else None,
     )
 
 
@@ -881,13 +1014,27 @@ def process():
     col_nombre   = detectar_columna(columnas, "nombre")
     col_apellido = detectar_columna(columnas, "apellido")
     col_doc_madre = detectar_columna(columnas, "documento_madre")
+    col_edad_anios = detectar_columna(columnas, "edad_anios")
     col_telefono = detectar_columna(columnas, "telefono")
 
     # Columnas enviadas manualmente (si el usuario las ajusta)
     col_nombre   = request.form.get("col_nombre",   col_nombre   or "")
     col_apellido = request.form.get("col_apellido", col_apellido or "")
     col_doc_madre = request.form.get("col_doc_madre", col_doc_madre or "")
+    col_edad_anios = request.form.get("col_edad_anios", col_edad_anios or "")
     col_telefono = request.form.get("col_telefono", col_telefono or "")
+    edad_valores = [
+        valor.strip()
+        for valor in request.form.getlist("edad_valores")
+        if valor.strip()
+    ]
+
+    columnas_set = set(columnas)
+    col_nombre = col_nombre if col_nombre in columnas_set else ""
+    col_apellido = col_apellido if col_apellido in columnas_set else ""
+    col_doc_madre = col_doc_madre if col_doc_madre in columnas_set else ""
+    col_edad_anios = col_edad_anios if col_edad_anios in columnas_set else ""
+    col_telefono = col_telefono if col_telefono in columnas_set else ""
 
     # Si faltan columnas, redirigir con columnas detectadas para que el usuario ajuste
     if not col_telefono:
@@ -901,8 +1048,18 @@ def process():
         session["col_nombre"]   = col_nombre
         session["col_apellido"] = col_apellido
         session["col_doc_madre"] = col_doc_madre
+        session["col_edad_anios"] = col_edad_anios
         session["col_telefono"] = col_telefono
+        session["edad_valores"] = edad_valores
         return redirect(url_for("map_columns"))
+
+    if col_edad_anios and edad_valores:
+        df = df[
+            df[col_edad_anios].fillna("").astype(str).map(limpiar_texto).isin(edad_valores)
+        ].reset_index(drop=True)
+        if df.empty:
+            flash("No hay filas para procesar con el filtro de edad seleccionado.", "warning")
+            return redirect(url_for("select_sheet"))
 
     # Procesar
     registros, stats = procesar_dataframe(
@@ -911,6 +1068,7 @@ def process():
         col_apellido,
         col_telefono,
         col_doc_madre,
+        col_edad_anios,
     )
 
     # Guardar en BD con sesión única
@@ -918,6 +1076,7 @@ def process():
     session["sesion_id"] = sesion_id
     session["hoja"]      = hoja
     session["stats"]     = stats
+    session["edad_valores"] = edad_valores
     current_user = get_current_user()
     sesion_usuario = obtener_sesion_usuario_actual()
     if not sesion_usuario and current_user:
@@ -935,6 +1094,7 @@ def process():
             nombre=r["nombre"],
             apellido=r["apellido"],
             documento_madre=r["documento_madre"],
+            edad_anios=r["edad_anios"],
             telefono=r["telefono"],
             estado=r["estado"],
         ))
@@ -948,6 +1108,7 @@ def process():
                 nombre=r["nombre"],
                 apellido=r["apellido"],
                 documento_madre=r["documento_madre"],
+                edad_anios=r["edad_anios"],
                 telefono=r["telefono"],
                 estado=r["estado"],
                 archivo_origen=archivo_origen,
@@ -978,6 +1139,7 @@ def map_columns():
         col_nombre=session.get("col_nombre", ""),
         col_apellido=session.get("col_apellido", ""),
         col_doc_madre=session.get("col_doc_madre", ""),
+        col_edad_anios=session.get("col_edad_anios", ""),
         col_telefono=session.get("col_telefono", ""),
     )
 
@@ -1061,7 +1223,7 @@ def export(fmt: str):
         return redirect(url_for("preview"))
 
     datos = [c.to_dict() for c in contactos]
-    df    = pd.DataFrame(datos, columns=["nombre", "apellido", "documento_madre", "telefono", "estado"])
+    df    = pd.DataFrame(datos, columns=["nombre", "apellido", "documento_madre", "edad_anios", "telefono", "estado"])
     df    = df.drop(columns=["id"], errors="ignore")
 
     timestamp    = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1090,35 +1252,27 @@ def export(fmt: str):
         return redirect(url_for("preview"))
 
 
+@app.route("/nuevo-archivo", methods=["POST"])
+@login_required
+def nuevo_archivo():
+    limpiar_archivo_actual()
+    flash("Archivo cerrado correctamente. Ya puede cargar un nuevo archivo.", "success")
+    return redirect(url_for("index"))
+
+
+@app.route("/cerrar-archivo", methods=["POST"])
+@login_required
+def cerrar_archivo():
+    limpiar_archivo_actual()
+    flash("Archivo cerrado correctamente. Ya puede cargar un nuevo archivo.", "success")
+    return redirect(url_for("index"))
+
+
 @app.route("/reset")
 @login_required
 def reset():
-    """Limpia la sesión actual y borra los contactos temporales."""
-    sesion_id = session.get("sesion_id")
-    if sesion_id:
-        ContactoTemporal.query.filter_by(sesion_id=sesion_id).delete()
-        db.session.commit()
-
-    # Borrar archivo subido
-    ruta = session.get("ruta")
-    if ruta and os.path.exists(ruta):
-        try:
-            os.remove(ruta)
-        except OSError:
-            pass
-
-    session.pop("sesion_id", None)
-    session.pop("hoja", None)
-    session.pop("stats", None)
-    session.pop("archivo", None)
-    session.pop("ruta", None)
-    session.pop("hojas", None)
-    session.pop("columnas", None)
-    session.pop("col_nombre", None)
-    session.pop("col_apellido", None)
-    session.pop("col_doc_madre", None)
-    session.pop("col_telefono", None)
-    flash("Sesión reiniciada correctamente.", "success")
+    limpiar_archivo_actual()
+    flash("Archivo cerrado correctamente. Ya puede cargar un nuevo archivo.", "success")
     return redirect(url_for("index"))
 
 

@@ -43,9 +43,12 @@
           </a>
         </li>
         <li class="nav-item">
-          <a class="nav-link text-warning" href="{{ url_for('reset') }}">
-            <i class="bi bi-arrow-counterclockwise me-1"></i>Nueva Sesión
-          </a>
+          <form action="{{ url_for('cerrar_archivo') }}" method="POST"
+                onsubmit="return confirm('¿Desea cerrar el archivo actual? Podrá cargar un nuevo archivo Excel.');">
+            <button type="submit" class="nav-link text-warning bg-transparent border-0">
+              <i class="bi bi-file-earmark-x me-1"></i>Cerrar Archivo
+            </button>
+          </form>
         </li>
         {% endif %}
         {% if current_user.is_admin %}

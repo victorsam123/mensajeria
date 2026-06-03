@@ -22,7 +22,7 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Luego abre tu navegador en: `http://127.0.0.1:5000`
+Luego abre tu navegador en: `http://127.0.0.1:5050`
 
 ## Despliegue en Railway
 
@@ -45,8 +45,8 @@ Con esto la app deja de depender de SQLite local y los datos quedan persistidos 
 | Paso | Acción |
 |------|--------|
 | 1 | Sube un archivo `.xlsx` o `.xls` |
-| 2 | Selecciona la hoja a procesar |
-| 3 | El sistema detecta columnas (teléfono, nombre, apellido) |
+| 2 | Selecciona la hoja visible/activa a procesar |
+| 3 | Revisa y confirma columnas (teléfono, nombre, apellido, documento y edad si aplica) |
 | 4 | Revisa la vista previa con estadísticas y filtros |
 | 5 | Exporta los contactos válidos en Excel o CSV |
 

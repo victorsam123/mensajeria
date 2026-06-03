@@ -14,15 +14,42 @@
     </p>
   </div>
   <div class="d-flex gap-2 flex-wrap">
+    <button type="button" class="btn btn-warning" data-bs-toggle="modal" data-bs-target="#modalNuevoArchivo">
+      <i class="bi bi-file-earmark-plus me-1"></i>NUEVO ARCHIVO
+    </button>
+    <form action="{{ url_for('cerrar_archivo') }}" method="POST" class="d-inline"
+          onsubmit="return confirmarCerrarArchivo();">
+      <button type="submit" class="btn btn-outline-secondary">
+        <i class="bi bi-file-earmark-x me-1"></i>Cerrar Archivo
+      </button>
+    </form>
     <a href="{{ url_for('export', fmt='excel') }}" class="btn btn-success">
       <i class="bi bi-file-earmark-excel me-1"></i>Exportar Excel
     </a>
     <a href="{{ url_for('export', fmt='csv') }}" class="btn btn-outline-primary">
       <i class="bi bi-filetype-csv me-1"></i>Exportar CSV
     </a>
-    <a href="{{ url_for('reset') }}" class="btn btn-outline-secondary">
-      <i class="bi bi-arrow-counterclockwise me-1"></i>Nueva sesión
-    </a>
+  </div>
+</div>
+
+<div class="modal fade" id="modalNuevoArchivo" tabindex="-1" aria-labelledby="modalNuevoArchivoLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="modalNuevoArchivoLabel">Cargar nuevo archivo</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        ¿Desea cerrar el archivo actual y cargar un nuevo archivo Excel?
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <form id="formNuevoArchivo" action="{{ url_for('nuevo_archivo') }}" method="POST" class="d-inline"
+              onsubmit="return confirmarNuevoArchivo();">
+          <button type="submit" class="btn btn-primary">Cargar nuevo archivo</button>
+        </form>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -125,6 +152,7 @@
           <th>Nombre</th>
           <th>Apellido</th>
           <th>Documento Madre</th>
+          <th>edadAños</th>
           <th>Teléfono</th>
           <th class="text-center">Estado</th>
           <th class="text-center">Acción</th>
@@ -137,6 +165,7 @@
           <td>{{ c.nombre or "—" }}</td>
           <td>{{ c.apellido or "—" }}</td>
           <td class="font-monospace">{{ c.documento_madre or "—" }}</td>
+          <td class="font-monospace">{{ c.edad_anios or "—" }}</td>
           <td class="font-monospace">{{ c.telefono or "—" }}</td>
           <td class="text-center">
             {% if c.estado == "valido" %}
@@ -165,7 +194,7 @@
         </tr>
         {% else %}
         <tr>
-          <td colspan="7" class="text-center py-4 text-muted">
+          <td colspan="8" class="text-center py-4 text-muted">
             No se encontraron contactos.
           </td>
         </tr>
@@ -192,6 +221,14 @@ const busqueda    = document.getElementById("busqueda");
 const contador    = document.getElementById("contadorVisible");
 const contadorEnviados = document.getElementById("contadorEnviados");
 const whatsappBtns = document.querySelectorAll(".whatsapp-btn");
+
+function confirmarCerrarArchivo() {
+  return confirm("¿Desea cerrar el archivo actual? Podrá cargar un nuevo archivo Excel.");
+}
+
+function confirmarNuevoArchivo() {
+  return confirm("\u00bfDesea cerrar el archivo actual y cargar un nuevo archivo Excel?");
+}
 
 const sentStorageKey = "mensajeria_enviados_{{ session.get('sesion_id', '') }}";
 let telefonosEnviados = new Set();
@@ -221,7 +258,7 @@ function marcarFilaEnviada(btn, persistir = true) {
 
   fila.classList.add("fila-enviada");
 
-  const estadoCell = fila.querySelector("td:nth-child(6)");
+  const estadoCell = fila.querySelector("td:nth-child(7)");
   if (estadoCell && !estadoCell.querySelector(".badge-enviado")) {
     const badge = document.createElement("span");
     badge.className = "badge bg-primary ms-1 badge-enviado";

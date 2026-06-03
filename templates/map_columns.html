@@ -69,6 +69,18 @@
               </select>
             </div>
 
+            <div class="col-md-4">
+              <label class="form-label fw-semibold">
+                <i class="bi bi-calendar3 me-1 text-warning"></i>Columna de Edad/Años
+              </label>
+              <select name="col_edad_anios" class="form-select">
+                <option value="">— Sin columna —</option>
+                {% for col in columnas %}
+                <option value="{{ col }}" {% if col == col_edad_anios %}selected{% endif %}>{{ col }}</option>
+                {% endfor %}
+              </select>
+            </div>
+
           </div>
 
           <hr class="my-4" />

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Inicio – Cargar Excel{% endblock %}
+{% block title %}Inicio – Seleccionar archivo Excel{% endblock %}
 
 {% block content %}
 {% if current_user %}
@@ -116,7 +116,7 @@
       <div class="display-icon mb-3">
         <i class="bi bi-file-earmark-spreadsheet text-primary" style="font-size:4rem;"></i>
       </div>
-      <h1 class="h2 fw-bold">Cargar Archivo Excel</h1>
+      <h1 class="h2 fw-bold">Seleccionar archivo Excel</h1>
       <p class="text-muted">
         Sube tu archivo Excel con los contactos y el sistema detectará
         automáticamente las columnas de teléfono, nombre y apellido de la madre.
@@ -133,7 +133,7 @@
           <div id="dropZone" class="drop-zone rounded mb-3 text-center p-5"
                onclick="document.getElementById('excel_file').click()">
             <i class="bi bi-cloud-upload fs-1 text-primary mb-2 d-block"></i>
-            <p class="mb-1 fw-semibold">Arrastra tu archivo aquí</p>
+            <p class="mb-1 fw-semibold">Seleccionar archivo Excel</p>
             <p class="text-muted small mb-0">o haz clic para seleccionarlo</p>
             <p class="text-muted small mt-1">Formatos aceptados: <strong>.xlsx</strong> · <strong>.xls</strong></p>
           </div>

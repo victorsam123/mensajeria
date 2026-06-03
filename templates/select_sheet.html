@@ -3,56 +3,291 @@
 
 {% block content %}
 <div class="row justify-content-center">
-  <div class="col-lg-7 col-md-9">
+  <div class="col-lg-10">
 
-    <!-- Encabezado -->
     <div class="text-center mb-4">
       <i class="bi bi-journal-text text-primary" style="font-size:3rem;"></i>
-      <h1 class="h3 fw-bold mt-2">Seleccionar Hoja</h1>
+      <h1 class="h3 fw-bold mt-2">Seleccionar hoja y columnas</h1>
       <p class="text-muted mb-0">
         Archivo: <strong>{{ archivo }}</strong>
       </p>
       <p class="text-muted small">
-        Se encontraron <strong>{{ hojas|length }}</strong> hoja(s). Elige la que quieres procesar.
+        Se encontraron <strong>{{ hojas_info|length }}</strong> hoja(s) visible(s). Revisa las columnas antes de procesar.
       </p>
     </div>
 
-    <div class="card shadow-sm border-0">
-      <div class="card-body p-4">
-        <form action="{{ url_for('process') }}" method="POST">
+    <form id="processForm" action="{{ url_for('process') }}" method="POST">
+      <div class="row g-3">
+        <div class="col-lg-5">
+          <div class="card shadow-sm border-0 h-100">
+            <div class="card-body p-4">
+              <label class="form-label fw-semibold">
+                <i class="bi bi-list-ul me-1"></i>Hojas activas
+              </label>
 
-          <div class="mb-4">
-            <label class="form-label fw-semibold">
-              <i class="bi bi-list-ul me-1"></i>Hojas disponibles
-            </label>
-
-            <div class="sheet-list">
-              {% for hoja in hojas %}
-              <div class="form-check sheet-option">
-                <input class="form-check-input" type="radio" name="hoja"
-                       id="hoja_{{ loop.index }}" value="{{ hoja }}"
-                       {% if loop.first %}checked{% endif %} />
-                <label class="form-check-label w-100" for="hoja_{{ loop.index }}">
-                  <i class="bi bi-table me-2 text-primary"></i>
-                  {{ hoja }}
-                </label>
+              <div class="sheet-list">
+                {% for info in hojas_info %}
+                <div class="form-check sheet-option">
+                  <input class="form-check-input sheet-radio" type="radio" name="hoja"
+                         id="hoja_{{ loop.index }}" value="{{ info.nombre }}"
+                         {% if loop.first %}checked{% endif %}
+                         {% if info.error %}disabled{% endif %} />
+                  <label class="form-check-label w-100" for="hoja_{{ loop.index }}">
+                    <div class="d-flex justify-content-between gap-2">
+                      <span>
+                        <i class="bi bi-table me-2 text-primary"></i>{{ info.nombre }}
+                      </span>
+                      <span class="badge bg-light text-dark border">{{ info.filas }} filas</span>
+                    </div>
+                    {% if info.error %}
+                    <div class="text-danger small mt-1">{{ info.error }}</div>
+                    {% else %}
+                    <div class="text-muted small mt-1">
+                      {{ info.columnas|length }} columnas detectadas
+                    </div>
+                    {% endif %}
+                  </label>
+                </div>
+                {% endfor %}
               </div>
-              {% endfor %}
+
+              <hr class="my-3" />
+
+              <div>
+                <div class="fw-semibold small mb-2">Columnas de la hoja seleccionada</div>
+                <div id="columnList" class="d-flex flex-wrap gap-1"></div>
+              </div>
             </div>
           </div>
+        </div>
 
-          <div class="d-grid gap-2 d-sm-flex justify-content-sm-between">
-            <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">
-              <i class="bi bi-arrow-left me-1"></i>Volver
-            </a>
-            <button type="submit" class="btn btn-primary">
-              <i class="bi bi-gear-fill me-2"></i>Procesar Hoja
-            </button>
+        <div class="col-lg-7">
+          <div class="card shadow-sm border-0">
+            <div class="card-body p-4">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label class="form-label fw-semibold">
+                    <i class="bi bi-phone me-1 text-primary"></i>Telefono <span class="text-danger">*</span>
+                  </label>
+                  <select id="col_telefono" name="col_telefono" class="form-select" required>
+                    <option value="">Selecciona una columna</option>
+                    {% if first_info %}
+                      {% for col in first_info.columnas %}
+                      <option value="{{ col }}" {% if col == first_info.col_telefono %}selected{% endif %}>{{ col }}</option>
+                      {% endfor %}
+                    {% endif %}
+                  </select>
+                </div>
+
+                <div class="col-md-6">
+                  <label class="form-label fw-semibold">
+                    <i class="bi bi-calendar3 me-1 text-warning"></i>edadAños
+                  </label>
+                  <select id="col_edad_anios" name="col_edad_anios" class="form-select">
+                    <option value="">Sin columna</option>
+                    {% if first_info %}
+                      {% for col in first_info.columnas %}
+                      <option value="{{ col }}" {% if col == first_info.col_edad_anios %}selected{% endif %}>{{ col }}</option>
+                      {% endfor %}
+                    {% endif %}
+                  </select>
+                </div>
+
+                <div class="col-md-6">
+                  <label class="form-label fw-semibold">
+                    <i class="bi bi-person me-1 text-success"></i>Nombre
+                  </label>
+                  <select id="col_nombre" name="col_nombre" class="form-select">
+                    <option value="">Sin columna</option>
+                    {% if first_info %}
+                      {% for col in first_info.columnas %}
+                      <option value="{{ col }}" {% if col == first_info.col_nombre %}selected{% endif %}>{{ col }}</option>
+                      {% endfor %}
+                    {% endif %}
+                  </select>
+                </div>
+
+                <div class="col-md-6">
+                  <label class="form-label fw-semibold">
+                    <i class="bi bi-person me-1 text-info"></i>Apellido
+                  </label>
+                  <select id="col_apellido" name="col_apellido" class="form-select">
+                    <option value="">Sin columna</option>
+                    {% if first_info %}
+                      {% for col in first_info.columnas %}
+                      <option value="{{ col }}" {% if col == first_info.col_apellido %}selected{% endif %}>{{ col }}</option>
+                      {% endfor %}
+                    {% endif %}
+                  </select>
+                </div>
+
+                <div class="col-md-6">
+                  <label class="form-label fw-semibold">
+                    <i class="bi bi-card-text me-1 text-secondary"></i>Documento Madre
+                  </label>
+                  <select id="col_doc_madre" name="col_doc_madre" class="form-select">
+                    <option value="">Sin columna</option>
+                    {% if first_info %}
+                      {% for col in first_info.columnas %}
+                      <option value="{{ col }}" {% if col == first_info.col_doc_madre %}selected{% endif %}>{{ col }}</option>
+                      {% endfor %}
+                    {% endif %}
+                  </select>
+                </div>
+              </div>
+
+              <div id="edadFilter" class="mt-4 {% if not first_info or not first_info.edad_valores %}d-none{% endif %}">
+                <div class="d-flex flex-wrap justify-content-between gap-2 align-items-center mb-2">
+                  <label class="form-label fw-semibold mb-0">
+                    <i class="bi bi-funnel me-1 text-warning"></i>Filtrar por edadAños antes de procesar
+                  </label>
+                  <button type="button" id="btnTodasEdades" class="btn btn-sm btn-outline-secondary">
+                    Todas
+                  </button>
+                </div>
+                <div id="edadOptions" class="d-flex flex-wrap gap-2">
+                  {% if first_info %}
+                    {% for edad in first_info.edad_valores %}
+                    <div class="form-check form-check-inline border rounded px-3 py-2 m-0">
+                      <input class="form-check-input" type="checkbox" name="edad_valores"
+                             id="edad_fallback_{{ loop.index }}" value="{{ edad }}" />
+                      <label class="form-check-label" for="edad_fallback_{{ loop.index }}">{{ edad }}</label>
+                    </div>
+                    {% endfor %}
+                  {% endif %}
+                </div>
+                <div class="form-text">
+                  Si no marcas ninguna edad, se procesan todas las filas de la hoja seleccionada.
+                </div>
+              </div>
+
+              <hr class="my-4" />
+
+              <div class="d-grid gap-2 d-sm-flex justify-content-sm-between">
+                <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">
+                  <i class="bi bi-arrow-left me-1"></i>Volver
+                </a>
+                <button type="submit" class="btn btn-primary">
+                  <i class="bi bi-gear-fill me-2"></i>Procesar seleccion
+                </button>
+              </div>
+            </div>
           </div>
-        </form>
+        </div>
       </div>
-    </div>
-
+    </form>
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const hojasInfo = {{ hojas_info|tojson }};
+const columnList = document.getElementById("columnList");
+const edadFilter = document.getElementById("edadFilter");
+const edadOptions = document.getElementById("edadOptions");
+const btnTodasEdades = document.getElementById("btnTodasEdades");
+
+const selects = {
+  col_telefono: document.getElementById("col_telefono"),
+  col_edad_anios: document.getElementById("col_edad_anios"),
+  col_nombre: document.getElementById("col_nombre"),
+  col_apellido: document.getElementById("col_apellido"),
+  col_doc_madre: document.getElementById("col_doc_madre"),
+};
+
+function crearOpcion(value, text) {
+  const option = document.createElement("option");
+  option.value = value;
+  option.textContent = text;
+  return option;
+}
+
+function cargarSelect(select, columnas, seleccionado, requerido = false) {
+  select.innerHTML = "";
+  select.appendChild(crearOpcion("", requerido ? "Selecciona una columna" : "Sin columna"));
+  columnas.forEach(col => {
+    const option = crearOpcion(col, col);
+    if (col === seleccionado) option.selected = true;
+    select.appendChild(option);
+  });
+}
+
+function getHojaSeleccionada() {
+  const radio = document.querySelector(".sheet-radio:checked");
+  if (!radio) return hojasInfo[0];
+  return hojasInfo.find(info => info.nombre === radio.value) || hojasInfo[0];
+}
+
+function renderHoja() {
+  const info = getHojaSeleccionada();
+  if (!info) return;
+
+  columnList.innerHTML = "";
+  info.columnas.forEach(col => {
+    const badge = document.createElement("span");
+    badge.className = "badge bg-light text-dark border";
+    badge.textContent = col;
+    columnList.appendChild(badge);
+  });
+
+  cargarSelect(selects.col_telefono, info.columnas, info.col_telefono, true);
+  cargarSelect(selects.col_edad_anios, info.columnas, info.col_edad_anios);
+  cargarSelect(selects.col_nombre, info.columnas, info.col_nombre);
+  cargarSelect(selects.col_apellido, info.columnas, info.col_apellido);
+  cargarSelect(selects.col_doc_madre, info.columnas, info.col_doc_madre);
+
+  edadOptions.innerHTML = "";
+  if (info.col_edad_anios && info.edad_valores.length) {
+    edadFilter.classList.remove("d-none");
+    info.edad_valores.forEach((edad, index) => {
+      const wrapper = document.createElement("div");
+      wrapper.className = "form-check form-check-inline border rounded px-3 py-2 m-0";
+
+      const input = document.createElement("input");
+      input.className = "form-check-input";
+      input.type = "checkbox";
+      input.name = "edad_valores";
+      input.id = `edad_${index}`;
+      input.value = edad;
+
+      const label = document.createElement("label");
+      label.className = "form-check-label";
+      label.htmlFor = input.id;
+      label.textContent = edad;
+
+      wrapper.appendChild(input);
+      wrapper.appendChild(label);
+      edadOptions.appendChild(wrapper);
+    });
+  } else {
+    edadFilter.classList.add("d-none");
+  }
+}
+
+document.querySelectorAll(".sheet-radio").forEach(radio => {
+  radio.addEventListener("change", renderHoja);
+});
+
+selects.col_edad_anios.addEventListener("change", () => {
+  const info = getHojaSeleccionada();
+  info.col_edad_anios = selects.col_edad_anios.value;
+  renderHoja();
+});
+
+btnTodasEdades.addEventListener("click", () => {
+  edadOptions.querySelectorAll("input[type='checkbox']").forEach(input => {
+    input.checked = false;
+  });
+});
+
+document.getElementById("processForm").addEventListener("submit", (event) => {
+  if (!selects.col_telefono.value) {
+    event.preventDefault();
+    alert("Selecciona la columna de telefono antes de procesar.");
+  }
+});
+
+renderHoja();
+</script>
 {% endblock %}
