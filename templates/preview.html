@@ -137,7 +137,7 @@
 
     <div class="ms-auto">
       <input type="text" id="busqueda" class="form-control form-control-sm"
-             placeholder="Buscar nombre, apellido o teléfono…" style="min-width:200px;">
+             placeholder="Buscar nombre, madre, hijo/a o teléfono…" style="min-width:200px;">
     </div>
   </div>
 </div>
@@ -149,8 +149,10 @@
       <thead class="table-dark">
         <tr>
           <th class="ps-3">#</th>
-          <th>Nombre</th>
-          <th>Apellido</th>
+          <th>Nombre Hijo/a</th>
+          <th>Apellido Hijo/a</th>
+          <th>Nombre Madre</th>
+          <th>Apellido Madre</th>
           <th>Documento Madre</th>
           <th>edadAños</th>
           <th>Teléfono</th>
@@ -164,6 +166,8 @@
           <td class="ps-3 text-muted small">{{ loop.index }}</td>
           <td>{{ c.nombre or "—" }}</td>
           <td>{{ c.apellido or "—" }}</td>
+          <td>{{ c.nombre_madre or "—" }}</td>
+          <td>{{ c.apellido_madre or "—" }}</td>
           <td class="font-monospace">{{ c.documento_madre or "—" }}</td>
           <td class="font-monospace">{{ c.edad_anios or "—" }}</td>
           <td class="font-monospace">{{ c.telefono or "—" }}</td>
@@ -194,7 +198,7 @@
         </tr>
         {% else %}
         <tr>
-          <td colspan="8" class="text-center py-4 text-muted">
+          <td colspan="10" class="text-center py-4 text-muted">
             No se encontraron contactos.
           </td>
         </tr>
@@ -258,7 +262,7 @@ function marcarFilaEnviada(btn, persistir = true) {
 
   fila.classList.add("fila-enviada");
 
-  const estadoCell = fila.querySelector("td:nth-child(7)");
+  const estadoCell = fila.querySelector("td:nth-child(9)");
   if (estadoCell && !estadoCell.querySelector(".badge-enviado")) {
     const badge = document.createElement("span");
     badge.className = "badge bg-primary ms-1 badge-enviado";

@@ -123,6 +123,34 @@
 
                 <div class="col-md-6">
                   <label class="form-label fw-semibold">
+                    <i class="bi bi-person-vcard me-1 text-success"></i>Nombre Madre
+                  </label>
+                  <select id="col_nombre_madre" name="col_nombre_madre" class="form-select">
+                    <option value="">Sin columna</option>
+                    {% if first_info %}
+                      {% for col in first_info.columnas %}
+                      <option value="{{ col }}" {% if col == first_info.col_nombre_madre %}selected{% endif %}>{{ col }}</option>
+                      {% endfor %}
+                    {% endif %}
+                  </select>
+                </div>
+
+                <div class="col-md-6">
+                  <label class="form-label fw-semibold">
+                    <i class="bi bi-person-vcard me-1 text-info"></i>Apellido Madre
+                  </label>
+                  <select id="col_apellido_madre" name="col_apellido_madre" class="form-select">
+                    <option value="">Sin columna</option>
+                    {% if first_info %}
+                      {% for col in first_info.columnas %}
+                      <option value="{{ col }}" {% if col == first_info.col_apellido_madre %}selected{% endif %}>{{ col }}</option>
+                      {% endfor %}
+                    {% endif %}
+                  </select>
+                </div>
+
+                <div class="col-md-6">
+                  <label class="form-label fw-semibold">
                     <i class="bi bi-card-text me-1 text-secondary"></i>Documento Madre
                   </label>
                   <select id="col_doc_madre" name="col_doc_madre" class="form-select">
@@ -193,6 +221,8 @@ const selects = {
   col_edad_anios: document.getElementById("col_edad_anios"),
   col_nombre: document.getElementById("col_nombre"),
   col_apellido: document.getElementById("col_apellido"),
+  col_nombre_madre: document.getElementById("col_nombre_madre"),
+  col_apellido_madre: document.getElementById("col_apellido_madre"),
   col_doc_madre: document.getElementById("col_doc_madre"),
 };
 
@@ -235,6 +265,8 @@ function renderHoja() {
   cargarSelect(selects.col_edad_anios, info.columnas, info.col_edad_anios);
   cargarSelect(selects.col_nombre, info.columnas, info.col_nombre);
   cargarSelect(selects.col_apellido, info.columnas, info.col_apellido);
+  cargarSelect(selects.col_nombre_madre, info.columnas, info.col_nombre_madre);
+  cargarSelect(selects.col_apellido_madre, info.columnas, info.col_apellido_madre);
   cargarSelect(selects.col_doc_madre, info.columnas, info.col_doc_madre);
 
   edadOptions.innerHTML = "";

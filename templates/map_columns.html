@@ -59,6 +59,30 @@
 
             <div class="col-md-4">
               <label class="form-label fw-semibold">
+                <i class="bi bi-person-vcard me-1 text-success"></i>Nombre Madre
+              </label>
+              <select name="col_nombre_madre" class="form-select">
+                <option value="">— Sin columna —</option>
+                {% for col in columnas %}
+                <option value="{{ col }}" {% if col == col_nombre_madre %}selected{% endif %}>{{ col }}</option>
+                {% endfor %}
+              </select>
+            </div>
+
+            <div class="col-md-4">
+              <label class="form-label fw-semibold">
+                <i class="bi bi-person-vcard me-1 text-info"></i>Apellido Madre
+              </label>
+              <select name="col_apellido_madre" class="form-select">
+                <option value="">— Sin columna —</option>
+                {% for col in columnas %}
+                <option value="{{ col }}" {% if col == col_apellido_madre %}selected{% endif %}>{{ col }}</option>
+                {% endfor %}
+              </select>
+            </div>
+
+            <div class="col-md-4">
+              <label class="form-label fw-semibold">
                 <i class="bi bi-card-text me-1 text-secondary"></i>Columna de Documento Madre
               </label>
               <select name="col_doc_madre" class="form-select">

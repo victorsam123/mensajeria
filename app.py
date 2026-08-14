@@ -70,6 +70,8 @@ class ContactoTemporal(db.Model):
     sesion_id   = db.Column(db.String(36), nullable=False, index=True)
     nombre      = db.Column(db.String(200))
     apellido    = db.Column(db.String(200))
+    nombre_madre = db.Column(db.String(200))
+    apellido_madre = db.Column(db.String(200))
     documento_madre = db.Column(db.String(100))
     edad_anios  = db.Column(db.String(50))
     telefono    = db.Column(db.String(50))
@@ -81,6 +83,8 @@ class ContactoTemporal(db.Model):
             "id":       self.id,
             "nombre":   self.nombre   or "",
             "apellido": self.apellido or "",
+            "nombre_madre": self.nombre_madre or "",
+            "apellido_madre": self.apellido_madre or "",
             "documento_madre": self.documento_madre or "",
             "edad_anios": self.edad_anios or "",
             "telefono": self.telefono or "",
@@ -134,6 +138,8 @@ class RegistroEnvioUsuario(db.Model):
     hora            = db.Column(db.DateTime, nullable=False)
     nombre          = db.Column(db.String(200))
     apellido        = db.Column(db.String(200))
+    nombre_madre    = db.Column(db.String(200))
+    apellido_madre  = db.Column(db.String(200))
     documento_madre = db.Column(db.String(100))
     edad_anios      = db.Column(db.String(50))
     telefono        = db.Column(db.String(50))
@@ -154,6 +160,7 @@ class RegistroMensajeWhatsApp(db.Model):
     fecha             = db.Column(db.Date, nullable=False, index=True)
     hora              = db.Column(db.DateTime, nullable=False)
     nombre_madre      = db.Column(db.String(200))
+    nombre_hijo       = db.Column(db.String(200))
     telefono          = db.Column(db.String(50), nullable=False)
     estado            = db.Column(db.String(30), nullable=False, default="Mensaje preparado")
     mensaje           = db.Column(db.Text, nullable=False)
@@ -189,6 +196,31 @@ with app.app_context():
     if "edad_anios" not in nombres_columnas_contactos:
         db.session.execute(text("ALTER TABLE contactos_temporales ADD COLUMN edad_anios VARCHAR(50)"))
         db.session.commit()
+    if "nombre_madre" not in nombres_columnas_contactos:
+        db.session.execute(text("ALTER TABLE contactos_temporales ADD COLUMN nombre_madre VARCHAR(200)"))
+        db.session.commit()
+    if "apellido_madre" not in nombres_columnas_contactos:
+        db.session.execute(text("ALTER TABLE contactos_temporales ADD COLUMN apellido_madre VARCHAR(200)"))
+        db.session.commit()
+
+    nombres_columnas_registros = {
+        c["name"]
+        for c in inspector.get_columns("registros_envio_usuario")
+    } if inspector.has_table("registros_envio_usuario") else set()
+    if "nombre_madre" not in nombres_columnas_registros:
+        db.session.execute(text("ALTER TABLE registros_envio_usuario ADD COLUMN nombre_madre VARCHAR(200)"))
+        db.session.commit()
+    if "apellido_madre" not in nombres_columnas_registros:
+        db.session.execute(text("ALTER TABLE registros_envio_usuario ADD COLUMN apellido_madre VARCHAR(200)"))
+        db.session.commit()
+
+    nombres_columnas_mensajes = {
+        c["name"]
+        for c in inspector.get_columns("registros_mensaje_whatsapp")
+    } if inspector.has_table("registros_mensaje_whatsapp") else set()
+    if "nombre_hijo" not in nombres_columnas_mensajes:
+        db.session.execute(text("ALTER TABLE registros_mensaje_whatsapp ADD COLUMN nombre_hijo VARCHAR(200)"))
+        db.session.commit()
 
     nombres_columnas_registros_envio = {
         c["name"]
@@ -212,6 +244,13 @@ with app.app_context():
 # ─────────────────────────── Utilidades ──────────────────────────────
 def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def obtener_motor_excel(ruta: str) -> str:
+    extension = os.path.splitext(ruta)[1].lower()
+    if extension == ".xls":
+        return "xlrd"
+    return "openpyxl"
 
 
 def get_current_user() -> Usuario | None:
@@ -410,13 +449,22 @@ def saludo_institucional(ahora: datetime | None = None) -> str:
     return "Buenos días" if ahora.hour < 12 else "Buenas tardes"
 
 
-def construir_mensaje_whatsapp(nombre_madre: str, ahora: datetime | None = None) -> str:
+def unir_nombre_apellido(nombre: str, apellido: str = "") -> str:
+    return " ".join(parte.strip() for parte in [nombre or "", apellido or ""] if parte and parte.strip())
+
+
+def construir_mensaje_whatsapp(
+    nombre_madre: str,
+    nombre_hijo: str = "",
+    ahora: datetime | None = None,
+) -> str:
     nombre = (nombre_madre or "").strip() or "madre"
+    referencia_hijo = f"su hijo/a {nombre_hijo.strip()}" if nombre_hijo and nombre_hijo.strip() else "su hijo/a"
     saludo = saludo_institucional(ahora)
     return (
         f"{saludo} Sr./Sra. {nombre}:\n\n"
         "Le saludo desde el Servicio de Vacunación del Hospital Regional de Ciudad del Este.\n\n"
-        "Nos comunicamos para recordarle que su hijo/a registra una vacuna pendiente contra el Sarampión "
+        f"Nos comunicamos para recordarle que {referencia_hijo} registra una vacuna pendiente contra el Sarampión "
         "y otras vacunas necesarias para mantener su esquema de vacunación al día.\n\n"
         "Puede acercarse al Hospital Regional de Ciudad del Este de lunes a lunes, en el horario de 07:00 a 17:00 horas.\n\n"
         "Si lo prefiere, también puede enviarnos su ubicación para coordinar una visita domiciliaria.\n\n"
@@ -454,8 +502,34 @@ KEYWORDS = {
         "madre apellido1", "apellido madre", "apellido de la madre",
         "madre apellido", "apellido1", "apellido", "apellidos", "primer apellido",
     ],
+    "nombre_madre": [
+        "madre_nombre1", "madre_nombre",
+        "madre nombre1", "nombre madre", "nombre de la madre",
+        "madre nombre", "nombres madre", "madre nombres",
+    ],
+    "apellido_madre": [
+        "madre_apellido1", "madre_apellido",
+        "madre apellido1", "apellido madre", "apellido de la madre",
+        "madre apellido", "apellidos madre", "madre apellidos",
+    ],
+    "nombre_hijo": [
+        "nombre1", "nombre", "nombres", "primer nombre",
+        "persona nombre1", "persona nombre", "nombre persona",
+        "hijo nombre", "nombre hijo", "nombre del hijo", "nombre de hijo",
+        "hija nombre", "nombre hija", "nombre de la hija", "nombre de hija",
+        "niño nombre", "nombre niño", "niña nombre", "nombre niña",
+        "beneficiario nombre", "nombre beneficiario",
+    ],
+    "apellido_hijo": [
+        "apellido1", "apellido", "apellidos", "primer apellido",
+        "persona apellido1", "persona apellido", "apellido persona",
+        "hijo apellido", "apellido hijo", "apellido del hijo", "apellido de hijo",
+        "hija apellido", "apellido hija", "apellido de la hija", "apellido de hija",
+        "niño apellido", "apellido niño", "niña apellido", "apellido niña",
+        "beneficiario apellido", "apellido beneficiario",
+    ],
     "documento_madre": [
-        "madre documento", "documento madre", "doc madre",
+        "madre_documento", "documento_madre", "madre documento", "documento madre", "doc madre",
         "documento de la madre", "madre doc", "cedula madre", "cédula madre",
     ],
     "edad_anios": [
@@ -479,6 +553,7 @@ def detectar_columna(columnas: list[str], tipo: str) -> str | None:
     """
     keywords = KEYWORDS.get(tipo, [])
     col_map = {c.lower().strip(): c for c in columnas}
+    evitar_madre = tipo in {"nombre_hijo", "apellido_hijo"}
 
     # 1) Coincidencia exacta (prioridad máxima, respeta orden de keywords)
     for kw in keywords:
@@ -488,6 +563,8 @@ def detectar_columna(columnas: list[str], tipo: str) -> str | None:
     # 2) Coincidencia parcial
     for kw in keywords:
         for col_lower, col_orig in col_map.items():
+            if evitar_madre and "madre" in col_lower:
+                continue
             if kw in col_lower or col_lower in kw:
                 return col_orig
 
@@ -522,8 +599,10 @@ def _leer_hoja_detectando_header(ruta: str, hoja: str) -> pd.DataFrame:
     Lee una hoja detectando automáticamente la fila de encabezados.
     Soporta archivos donde la primera fila es un título (ej. formato CVS).
     """
+    engine = obtener_motor_excel(ruta)
+
     # Leer sin encabezado para escanear las primeras filas
-    preview = pd.read_excel(ruta, sheet_name=hoja, engine="openpyxl",
+    preview = pd.read_excel(ruta, sheet_name=hoja, engine=engine,
                             header=None, nrows=10, dtype=str)
 
     header_row = 0  # valor por defecto
@@ -538,7 +617,7 @@ def _leer_hoja_detectando_header(ruta: str, hoja: str) -> pd.DataFrame:
                 header_row = idx
                 break
 
-    df = pd.read_excel(ruta, sheet_name=hoja, engine="openpyxl",
+    df = pd.read_excel(ruta, sheet_name=hoja, engine=engine,
                        header=header_row, dtype=str)
     df.columns = [str(c).strip() for c in df.columns]
     df = df.dropna(how="all").reset_index(drop=True)
@@ -547,6 +626,10 @@ def _leer_hoja_detectando_header(ruta: str, hoja: str) -> pd.DataFrame:
 
 def obtener_hojas_activas(ruta: str) -> list[str]:
     """Devuelve solo hojas visibles/activas del archivo Excel."""
+    if obtener_motor_excel(ruta) == "xlrd":
+        xls = pd.ExcelFile(ruta, engine="xlrd")
+        return xls.sheet_names
+
     wb = load_workbook(ruta, read_only=True, data_only=True)
     try:
         return [ws.title for ws in wb.worksheets if ws.sheet_state == "visible"]
@@ -573,6 +656,8 @@ def analizar_hoja_excel(ruta: str, hoja: str) -> dict:
         "filas": 0,
         "col_nombre": "",
         "col_apellido": "",
+        "col_nombre_madre": "",
+        "col_apellido_madre": "",
         "col_doc_madre": "",
         "col_edad_anios": "",
         "col_telefono": "",
@@ -588,11 +673,15 @@ def analizar_hoja_excel(ruta: str, hoja: str) -> dict:
 
     columnas = list(df.columns)
     col_edad_anios = detectar_columna(columnas, "edad_anios") or ""
+    col_nombre = detectar_columna(columnas, "nombre_hijo") or detectar_columna(columnas, "nombre") or ""
+    col_apellido = detectar_columna(columnas, "apellido_hijo") or detectar_columna(columnas, "apellido") or ""
     info.update({
         "columnas": columnas,
         "filas": len(df),
-        "col_nombre": detectar_columna(columnas, "nombre") or "",
-        "col_apellido": detectar_columna(columnas, "apellido") or "",
+        "col_nombre": col_nombre,
+        "col_apellido": col_apellido,
+        "col_nombre_madre": detectar_columna(columnas, "nombre_madre") or "",
+        "col_apellido_madre": detectar_columna(columnas, "apellido_madre") or "",
         "col_doc_madre": detectar_columna(columnas, "documento_madre") or "",
         "col_edad_anios": col_edad_anios,
         "col_telefono": detectar_columna(columnas, "telefono") or "",
@@ -613,6 +702,8 @@ def procesar_dataframe(
     col_telefono: str,
     col_doc_madre: str = "",
     col_edad_anios: str = "",
+    col_nombre_madre: str = "",
+    col_apellido_madre: str = "",
 ):
     """
     Filtra, limpia y devuelve una lista de dicts con estadísticas.
@@ -626,6 +717,12 @@ def procesar_dataframe(
     for _, row in df.iterrows():
         nombre   = limpiar_texto(row.get(col_nombre,   ""))
         apellido = limpiar_texto(row.get(col_apellido, ""))
+        nombre_madre = limpiar_texto(row.get(col_nombre_madre, "")) if col_nombre_madre else ""
+        apellido_madre = limpiar_texto(row.get(col_apellido_madre, "")) if col_apellido_madre else ""
+        if not nombre_madre:
+            nombre_madre = nombre
+        if not apellido_madre:
+            apellido_madre = apellido
         documento_madre = limpiar_texto(row.get(col_doc_madre, "")) if col_doc_madre else ""
         edad_anios = limpiar_texto(row.get(col_edad_anios, "")) if col_edad_anios else ""
         telefono = normalizar_telefono(row.get(col_telefono, ""))
@@ -635,6 +732,8 @@ def procesar_dataframe(
             registros.append({
                 "nombre":   nombre,
                 "apellido": apellido,
+                "nombre_madre": nombre_madre,
+                "apellido_madre": apellido_madre,
                 "documento_madre": documento_madre,
                 "edad_anios": edad_anios,
                 "telefono": telefono,
@@ -647,6 +746,8 @@ def procesar_dataframe(
             registros.append({
                 "nombre":   nombre,
                 "apellido": apellido,
+                "nombre_madre": nombre_madre,
+                "apellido_madre": apellido_madre,
                 "documento_madre": documento_madre,
                 "edad_anios": edad_anios,
                 "telefono": telefono,
@@ -658,6 +759,8 @@ def procesar_dataframe(
         registros.append({
             "nombre":   nombre,
             "apellido": apellido,
+            "nombre_madre": nombre_madre,
+            "apellido_madre": apellido_madre,
             "documento_madre": documento_madre,
             "edad_anios": edad_anios,
             "telefono": telefono,
@@ -910,6 +1013,8 @@ def limpiar_archivo_actual() -> None:
         "columnas",
         "col_nombre",
         "col_apellido",
+        "col_nombre_madre",
+        "col_apellido_madre",
         "col_doc_madre",
         "col_edad_anios",
         "col_telefono",
@@ -1013,13 +1118,21 @@ def process():
     # Detección automática de columnas
     col_nombre   = detectar_columna(columnas, "nombre")
     col_apellido = detectar_columna(columnas, "apellido")
+    col_nombre_hijo = detectar_columna(columnas, "nombre_hijo")
+    col_apellido_hijo = detectar_columna(columnas, "apellido_hijo")
+    col_nombre_madre = detectar_columna(columnas, "nombre_madre")
+    col_apellido_madre = detectar_columna(columnas, "apellido_madre")
     col_doc_madre = detectar_columna(columnas, "documento_madre")
     col_edad_anios = detectar_columna(columnas, "edad_anios")
     col_telefono = detectar_columna(columnas, "telefono")
+    col_nombre = col_nombre_hijo or col_nombre
+    col_apellido = col_apellido_hijo or col_apellido
 
     # Columnas enviadas manualmente (si el usuario las ajusta)
     col_nombre   = request.form.get("col_nombre",   col_nombre   or "")
     col_apellido = request.form.get("col_apellido", col_apellido or "")
+    col_nombre_madre = request.form.get("col_nombre_madre", col_nombre_madre or "")
+    col_apellido_madre = request.form.get("col_apellido_madre", col_apellido_madre or "")
     col_doc_madre = request.form.get("col_doc_madre", col_doc_madre or "")
     col_edad_anios = request.form.get("col_edad_anios", col_edad_anios or "")
     col_telefono = request.form.get("col_telefono", col_telefono or "")
@@ -1032,6 +1145,8 @@ def process():
     columnas_set = set(columnas)
     col_nombre = col_nombre if col_nombre in columnas_set else ""
     col_apellido = col_apellido if col_apellido in columnas_set else ""
+    col_nombre_madre = col_nombre_madre if col_nombre_madre in columnas_set else ""
+    col_apellido_madre = col_apellido_madre if col_apellido_madre in columnas_set else ""
     col_doc_madre = col_doc_madre if col_doc_madre in columnas_set else ""
     col_edad_anios = col_edad_anios if col_edad_anios in columnas_set else ""
     col_telefono = col_telefono if col_telefono in columnas_set else ""
@@ -1047,6 +1162,8 @@ def process():
         session["columnas"]  = columnas
         session["col_nombre"]   = col_nombre
         session["col_apellido"] = col_apellido
+        session["col_nombre_madre"] = col_nombre_madre
+        session["col_apellido_madre"] = col_apellido_madre
         session["col_doc_madre"] = col_doc_madre
         session["col_edad_anios"] = col_edad_anios
         session["col_telefono"] = col_telefono
@@ -1069,6 +1186,8 @@ def process():
         col_telefono,
         col_doc_madre,
         col_edad_anios,
+        col_nombre_madre,
+        col_apellido_madre,
     )
 
     # Guardar en BD con sesión única
@@ -1093,6 +1212,8 @@ def process():
             sesion_id=sesion_id,
             nombre=r["nombre"],
             apellido=r["apellido"],
+            nombre_madre=r["nombre_madre"],
+            apellido_madre=r["apellido_madre"],
             documento_madre=r["documento_madre"],
             edad_anios=r["edad_anios"],
             telefono=r["telefono"],
@@ -1107,6 +1228,8 @@ def process():
                 hora=hora_registro,
                 nombre=r["nombre"],
                 apellido=r["apellido"],
+                nombre_madre=r["nombre_madre"],
+                apellido_madre=r["apellido_madre"],
                 documento_madre=r["documento_madre"],
                 edad_anios=r["edad_anios"],
                 telefono=r["telefono"],
@@ -1138,6 +1261,8 @@ def map_columns():
         columnas=session.get("columnas", []),
         col_nombre=session.get("col_nombre", ""),
         col_apellido=session.get("col_apellido", ""),
+        col_nombre_madre=session.get("col_nombre_madre", ""),
+        col_apellido_madre=session.get("col_apellido_madre", ""),
         col_doc_madre=session.get("col_doc_madre", ""),
         col_edad_anios=session.get("col_edad_anios", ""),
         col_telefono=session.get("col_telefono", ""),
@@ -1184,7 +1309,11 @@ def preparar_whatsapp(contacto_id: int):
 
     current_user = get_current_user()
     ahora = datetime.now()
-    mensaje = construir_mensaje_whatsapp(contacto.nombre, ahora)
+    nombre_madre = unir_nombre_apellido(contacto.nombre_madre, contacto.apellido_madre)
+    if not nombre_madre:
+        nombre_madre = unir_nombre_apellido(contacto.nombre, contacto.apellido)
+    nombre_hijo = unir_nombre_apellido(contacto.nombre, contacto.apellido)
+    mensaje = construir_mensaje_whatsapp(nombre_madre, nombre_hijo, ahora)
     sesion_usuario = obtener_sesion_usuario_actual()
 
     db.session.add(RegistroMensajeWhatsApp(
@@ -1194,7 +1323,8 @@ def preparar_whatsapp(contacto_id: int):
         contacto_id=contacto.id,
         fecha=ahora.date(),
         hora=ahora,
-        nombre_madre=contacto.nombre,
+        nombre_madre=nombre_madre,
+        nombre_hijo=nombre_hijo,
         telefono=telefono,
         estado="Mensaje preparado",
         mensaje=mensaje,
@@ -1223,7 +1353,13 @@ def export(fmt: str):
         return redirect(url_for("preview"))
 
     datos = [c.to_dict() for c in contactos]
-    df    = pd.DataFrame(datos, columns=["nombre", "apellido", "documento_madre", "edad_anios", "telefono", "estado"])
+    df    = pd.DataFrame(
+        datos,
+        columns=[
+            "nombre", "apellido", "nombre_madre", "apellido_madre",
+            "documento_madre", "edad_anios", "telefono", "estado",
+        ],
+    )
     df    = df.drop(columns=["id"], errors="ignore")
 
     timestamp    = datetime.now().strftime("%Y%m%d_%H%M%S")
