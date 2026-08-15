@@ -22,6 +22,7 @@ EXPORT_DIR  = os.path.join(BASE_DIR, "exports")
 DB_PATH     = os.path.join(BASE_DIR, "database", "mensajeria.db")
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin").strip() or "admin"
 ADMIN_INITIAL_PASSWORD = os.getenv("ADMIN_PASSWORD", "cambiar-esta-clave")
+ADMIN_FORCE_RESET = os.getenv("ADMIN_FORCE_RESET", "").strip() == "1"
 
 
 def obtener_database_uri() -> str:
@@ -169,16 +170,17 @@ class RegistroMensajeWhatsApp(db.Model):
 
 def ensure_admin_user() -> None:
     admin_exists = Usuario.query.filter_by(is_admin=True).first()
-    if admin_exists:
+    if admin_exists and not ADMIN_FORCE_RESET:
         return
 
-    admin = Usuario(
-        username=ADMIN_USERNAME,
-        is_admin=True,
-        activo=True,
-    )
+    admin = Usuario.query.filter_by(username=ADMIN_USERNAME).first()
+    if not admin:
+        admin = Usuario(username=ADMIN_USERNAME)
+        db.session.add(admin)
+
+    admin.is_admin = True
+    admin.activo = True
     admin.set_password(ADMIN_INITIAL_PASSWORD)
-    db.session.add(admin)
     db.session.commit()
 
 
