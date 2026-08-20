@@ -612,6 +612,25 @@ def limpiar_texto(valor) -> str:
     return str(valor).strip()
 
 
+def normalizar_edad_meses(valor) -> str:
+    texto = limpiar_texto(valor)
+    if not texto:
+        return ""
+
+    coincidencia = re.fullmatch(r"(\d+(?:[.,]\d+)?)\s*(?:mes|meses)?", texto.lower())
+    if not coincidencia:
+        return texto
+
+    meses_totales = int(round(float(coincidencia.group(1).replace(",", "."))))
+    anos, meses = divmod(meses_totales, 12)
+    partes = []
+    if anos:
+        partes.append(f"{anos} año" if anos == 1 else f"{anos} años")
+    if meses:
+        partes.append(f"{meses} mes" if meses == 1 else f"{meses} meses")
+    return " y ".join(partes) if partes else "0 meses"
+
+
 def _detectar_fila_encabezados(ruta: str, hoja: str) -> int:
     """
     Lee una hoja detectando automáticamente la fila de encabezados.
@@ -844,7 +863,7 @@ def analizar_hojas_excel(ruta: str, hojas: list[str]) -> list[dict]:
                 if col_edad_anios and col_edad_anios in columnas:
                     edad_col_index = columnas.index(col_edad_anios) + 1
                     valores_edad = []
-                    max_row = min(ws.max_row or header_row, header_row + 1000)
+                    max_row = ws.max_row or header_row
                     for row in ws.iter_rows(
                         min_row=header_row + 1,
                         max_row=max_row,
@@ -854,7 +873,7 @@ def analizar_hojas_excel(ruta: str, hojas: list[str]) -> list[dict]:
                     ):
                         valor = limpiar_texto(row[0] if row else "")
                         if valor:
-                            valores_edad.append(valor)
+                            valores_edad.append(normalizar_edad_meses(valor))
                     info["edad_valores"] = ordenar_valores_texto(valores_edad)
             except Exception as exc:
                 info["error"] = str(exc)
@@ -886,7 +905,7 @@ def analizar_hoja_excel(ruta: str, hoja: str) -> dict:
 
     try:
         header_row = _detectar_fila_encabezados(ruta, hoja)
-        df = _leer_hoja_detectando_header(ruta, hoja, nrows=1000)
+        df = _leer_hoja_detectando_header(ruta, hoja)
     except Exception as exc:
         info["error"] = str(exc)
         return info
@@ -914,7 +933,7 @@ def analizar_hoja_excel(ruta: str, hoja: str) -> dict:
 
     if col_edad_anios:
         info["edad_valores"] = ordenar_valores_texto(
-            df[col_edad_anios].dropna().astype(str).map(str.strip).tolist()
+            df[col_edad_anios].dropna().map(normalizar_edad_meses).tolist()
         )
 
     return info
@@ -949,7 +968,7 @@ def procesar_dataframe(
         if not apellido_madre:
             apellido_madre = apellido
         documento_madre = limpiar_texto(row.get(col_doc_madre, "")) if col_doc_madre else ""
-        edad_anios = limpiar_texto(row.get(col_edad_anios, "")) if col_edad_anios else ""
+        edad_anios = normalizar_edad_meses(row.get(col_edad_anios, "")) if col_edad_anios else ""
         telefono = normalizar_telefono(row.get(col_telefono, ""))
 
         if not telefono:
@@ -1409,7 +1428,7 @@ def process():
 
     if col_edad_anios and edad_valores:
         df = df[
-            df[col_edad_anios].fillna("").astype(str).map(limpiar_texto).isin(edad_valores)
+            df[col_edad_anios].map(normalizar_edad_meses).isin(edad_valores)
         ].reset_index(drop=True)
         if df.empty:
             flash("No hay filas para procesar con el filtro de edad seleccionado.", "warning")
