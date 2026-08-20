@@ -3,9 +3,11 @@ import re
 import uuid
 import pandas as pd
 from openpyxl import load_workbook
+from openpyxl.utils.cell import range_boundaries
 from functools import wraps
 from datetime import datetime
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 from flask import (
     Flask, g, render_template, request, redirect,
     url_for, session, flash, send_file
@@ -23,6 +25,7 @@ DB_PATH     = os.path.join(BASE_DIR, "database", "mensajeria.db")
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin").strip() or "admin"
 ADMIN_INITIAL_PASSWORD = os.getenv("ADMIN_PASSWORD", "cambiar-esta-clave")
 ADMIN_FORCE_RESET = os.getenv("ADMIN_FORCE_RESET", "").strip() == "1"
+ZONA_HORARIA_PARAGUAY = ZoneInfo("America/Asuncion")
 
 
 def obtener_database_uri() -> str:
@@ -447,7 +450,9 @@ def totales_mensajes_por_usuario(fecha, user: Usuario):
 
 
 def saludo_institucional(ahora: datetime | None = None) -> str:
-    ahora = ahora or datetime.now()
+    ahora = ahora or datetime.now(ZONA_HORARIA_PARAGUAY)
+    if ahora.tzinfo is not None:
+        ahora = ahora.astimezone(ZONA_HORARIA_PARAGUAY)
     return "Buenos días" if ahora.hour < 12 else "Buenas tardes"
 
 
@@ -596,7 +601,7 @@ def limpiar_texto(valor) -> str:
     return str(valor).strip()
 
 
-def _leer_hoja_detectando_header(ruta: str, hoja: str) -> pd.DataFrame:
+def _detectar_fila_encabezados(ruta: str, hoja: str) -> int:
     """
     Lee una hoja detectando automáticamente la fila de encabezados.
     Soporta archivos donde la primera fila es un título (ej. formato CVS).
@@ -619,8 +624,19 @@ def _leer_hoja_detectando_header(ruta: str, hoja: str) -> pd.DataFrame:
                 header_row = idx
                 break
 
+    return header_row
+
+
+def _leer_hoja_detectando_header(ruta: str, hoja: str, nrows: int | None = None) -> pd.DataFrame:
+    """
+    Lee una hoja detectando automaticamente la fila de encabezados.
+    Soporta archivos donde la primera fila es un titulo (ej. formato CVS).
+    """
+    engine = obtener_motor_excel(ruta)
+    header_row = _detectar_fila_encabezados(ruta, hoja)
+
     df = pd.read_excel(ruta, sheet_name=hoja, engine=engine,
-                       header=header_row, dtype=str)
+                       header=header_row, dtype=str, nrows=nrows)
     df.columns = [str(c).strip() for c in df.columns]
     df = df.dropna(how="all").reset_index(drop=True)
     return df
@@ -639,6 +655,24 @@ def obtener_hojas_activas(ruta: str) -> list[str]:
         wb.close()
 
 
+def contar_filas_hoja_excel(ruta: str, hoja: str, header_row: int) -> int:
+    """Cuenta filas de datos sin cargar toda la hoja en memoria."""
+    if obtener_motor_excel(ruta) == "xlrd":
+        df = _leer_hoja_detectando_header(ruta, hoja)
+        return len(df)
+
+    try:
+        wb = load_workbook(ruta, read_only=True, data_only=True)
+    except Exception:
+        return 0
+
+    try:
+        ws = wb[hoja]
+        return max((ws.max_row or 0) - header_row - 1, 0)
+    finally:
+        wb.close()
+
+
 def ordenar_valores_texto(valores: list[str]) -> list[str]:
     def clave(valor: str):
         texto = str(valor).strip()
@@ -648,6 +682,177 @@ def ordenar_valores_texto(valores: list[str]) -> list[str]:
             return (1, texto.lower())
 
     return sorted({str(v).strip() for v in valores if str(v).strip()}, key=clave)
+
+
+def _normalizar_rango_filtro(ref: str) -> str:
+    if not ref:
+        return ""
+    return ref.split("!")[-1].replace("$", "")
+
+
+def obtener_columnas_con_filtro_excel(ruta: str, hoja: str, header_row: int, columnas: list[str]) -> set[str]:
+    """Detecta columnas incluidas en autofiltros o tablas de la hoja cargada."""
+    if obtener_motor_excel(ruta) == "xlrd":
+        return set()
+
+    try:
+        wb = load_workbook(ruta, read_only=False, data_only=True)
+    except Exception:
+        return set()
+
+    try:
+        ws = wb[hoja]
+        header_excel_row = header_row + 1
+        columnas_filtradas = set()
+        rangos = []
+
+        auto_filter_ref = _normalizar_rango_filtro(getattr(ws.auto_filter, "ref", "") or "")
+        if auto_filter_ref:
+            rangos.append(auto_filter_ref)
+
+        for table in ws.tables.values():
+            table_ref = _normalizar_rango_filtro(getattr(table, "ref", "") or "")
+            if table_ref:
+                rangos.append(table_ref)
+
+        for ref in rangos:
+            try:
+                min_col, min_row, max_col, _ = range_boundaries(ref)
+            except ValueError:
+                continue
+            if min_row != header_excel_row:
+                continue
+            for col_index in range(min_col, max_col + 1):
+                nombre = limpiar_texto(ws.cell(row=header_excel_row, column=col_index).value)
+                if nombre in columnas:
+                    columnas_filtradas.add(nombre)
+
+        return columnas_filtradas
+    finally:
+        wb.close()
+
+
+def obtener_filtros_hoja(df: pd.DataFrame, columnas_filtradas: set[str], limite: int = 200) -> list[dict]:
+    filtros = []
+    for columna in df.columns:
+        if columna not in columnas_filtradas:
+            continue
+        valores = ordenar_valores_texto(
+            df[columna].dropna().astype(str).map(str.strip).tolist()
+        )
+        if not valores:
+            continue
+        filtros.append({
+            "columna": columna,
+            "valores": valores[:limite],
+            "total_valores": len(valores),
+            "limitado": len(valores) > limite,
+        })
+    return filtros
+
+
+def analizar_hojas_excel(ruta: str, hojas: list[str]) -> list[dict]:
+    """Analiza hojas para la pantalla de seleccion sin reabrir el archivo por cada hoja."""
+    if obtener_motor_excel(ruta) == "xlrd":
+        return [analizar_hoja_excel(ruta, hoja) for hoja in hojas]
+
+    try:
+        wb = load_workbook(ruta, read_only=True, data_only=True)
+    except Exception as exc:
+        return [{
+            "nombre": hoja,
+            "columnas": [],
+            "filas": 0,
+            "col_nombre": "",
+            "col_apellido": "",
+            "col_nombre_madre": "",
+            "col_apellido_madre": "",
+            "col_doc_madre": "",
+            "col_edad_anios": "",
+            "col_telefono": "",
+            "edad_valores": [],
+            "filtros": [],
+            "error": str(exc),
+        } for hoja in hojas]
+
+    try:
+        hojas_info = []
+        for hoja in hojas:
+            info = {
+                "nombre": hoja,
+                "columnas": [],
+                "filas": 0,
+                "col_nombre": "",
+                "col_apellido": "",
+                "col_nombre_madre": "",
+                "col_apellido_madre": "",
+                "col_doc_madre": "",
+                "col_edad_anios": "",
+                "col_telefono": "",
+                "edad_valores": [],
+                "filtros": [],
+                "error": "",
+            }
+
+            try:
+                ws = wb[hoja]
+                header_row = 1
+                header_values = []
+                for idx, row in enumerate(ws.iter_rows(min_row=1, max_row=10, values_only=True), start=1):
+                    valores = [limpiar_texto(v) for v in row if limpiar_texto(v)]
+                    if len(valores) >= 3:
+                        row_lower = " ".join(v.lower() for v in valores)
+                        if any(kw in row_lower for kw in [
+                            "nombre", "apellido", "telefono", "id persona", "documento", "celular", "edad"
+                        ]):
+                            header_row = idx
+                            header_values = [limpiar_texto(v) for v in row]
+                            break
+
+                if not header_values:
+                    row = next(ws.iter_rows(min_row=header_row, max_row=header_row, values_only=True), [])
+                    header_values = [limpiar_texto(v) for v in row]
+
+                columnas = [col for col in header_values if col]
+                col_edad_anios = detectar_columna(columnas, "edad_anios") or ""
+                col_nombre = detectar_columna(columnas, "nombre_hijo") or detectar_columna(columnas, "nombre") or ""
+                col_apellido = detectar_columna(columnas, "apellido_hijo") or detectar_columna(columnas, "apellido") or ""
+
+                info.update({
+                    "columnas": columnas,
+                    "filas": max((ws.max_row or 0) - header_row, 0),
+                    "col_nombre": col_nombre,
+                    "col_apellido": col_apellido,
+                    "col_nombre_madre": detectar_columna(columnas, "nombre_madre") or "",
+                    "col_apellido_madre": detectar_columna(columnas, "apellido_madre") or "",
+                    "col_doc_madre": detectar_columna(columnas, "documento_madre") or "",
+                    "col_edad_anios": col_edad_anios,
+                    "col_telefono": detectar_columna(columnas, "telefono") or "",
+                })
+
+                if col_edad_anios and col_edad_anios in columnas:
+                    edad_col_index = columnas.index(col_edad_anios) + 1
+                    valores_edad = []
+                    max_row = min(ws.max_row or header_row, header_row + 1000)
+                    for row in ws.iter_rows(
+                        min_row=header_row + 1,
+                        max_row=max_row,
+                        min_col=edad_col_index,
+                        max_col=edad_col_index,
+                        values_only=True,
+                    ):
+                        valor = limpiar_texto(row[0] if row else "")
+                        if valor:
+                            valores_edad.append(valor)
+                    info["edad_valores"] = ordenar_valores_texto(valores_edad)
+            except Exception as exc:
+                info["error"] = str(exc)
+
+            hojas_info.append(info)
+
+        return hojas_info
+    finally:
+        wb.close()
 
 
 def analizar_hoja_excel(ruta: str, hoja: str) -> dict:
@@ -664,22 +869,28 @@ def analizar_hoja_excel(ruta: str, hoja: str) -> dict:
         "col_edad_anios": "",
         "col_telefono": "",
         "edad_valores": [],
+        "filtros": [],
         "error": "",
     }
 
     try:
-        df = _leer_hoja_detectando_header(ruta, hoja)
+        header_row = _detectar_fila_encabezados(ruta, hoja)
+        df = _leer_hoja_detectando_header(ruta, hoja, nrows=1000)
     except Exception as exc:
         info["error"] = str(exc)
         return info
 
     columnas = list(df.columns)
+    filas = contar_filas_hoja_excel(ruta, hoja, header_row)
+    columnas_filtradas = set()
+    if filas <= 5000:
+        columnas_filtradas = obtener_columnas_con_filtro_excel(ruta, hoja, header_row, columnas)
     col_edad_anios = detectar_columna(columnas, "edad_anios") or ""
     col_nombre = detectar_columna(columnas, "nombre_hijo") or detectar_columna(columnas, "nombre") or ""
     col_apellido = detectar_columna(columnas, "apellido_hijo") or detectar_columna(columnas, "apellido") or ""
     info.update({
         "columnas": columnas,
-        "filas": len(df),
+        "filas": filas or len(df),
         "col_nombre": col_nombre,
         "col_apellido": col_apellido,
         "col_nombre_madre": detectar_columna(columnas, "nombre_madre") or "",
@@ -687,6 +898,7 @@ def analizar_hoja_excel(ruta: str, hoja: str) -> dict:
         "col_doc_madre": detectar_columna(columnas, "documento_madre") or "",
         "col_edad_anios": col_edad_anios,
         "col_telefono": detectar_columna(columnas, "telefono") or "",
+        "filtros": obtener_filtros_hoja(df, columnas_filtradas),
     })
 
     if col_edad_anios:
@@ -1021,6 +1233,7 @@ def limpiar_archivo_actual() -> None:
         "col_edad_anios",
         "col_telefono",
         "edad_valores",
+        "filtros_seleccionados",
     )
     for clave in claves_temporales:
         session.pop(clave, None)
@@ -1081,7 +1294,7 @@ def select_sheet():
         flash("El archivo ya no estÃ¡ disponible. CÃ¡rgalo nuevamente.", "danger")
         return redirect(url_for("index"))
 
-    hojas_info = [analizar_hoja_excel(ruta, hoja) for hoja in session.get("hojas", [])]
+    hojas_info = analizar_hojas_excel(ruta, session.get("hojas", []))
 
     return render_template(
         "select_sheet.html",
@@ -1143,6 +1356,17 @@ def process():
         for valor in request.form.getlist("edad_valores")
         if valor.strip()
     ]
+    filtros_columnas = request.form.getlist("filtro_columnas")
+    filtros_seleccionados = {}
+    for index, filtro_columna in enumerate(filtros_columnas):
+        filtro_columna = filtro_columna.strip()
+        valores = [
+            valor.strip()
+            for valor in request.form.getlist(f"filtro_valores_{index}")
+            if valor.strip()
+        ]
+        if filtro_columna and valores:
+            filtros_seleccionados[filtro_columna] = valores
 
     columnas_set = set(columnas)
     col_nombre = col_nombre if col_nombre in columnas_set else ""
@@ -1180,6 +1404,16 @@ def process():
             flash("No hay filas para procesar con el filtro de edad seleccionado.", "warning")
             return redirect(url_for("select_sheet"))
 
+    for filtro_columna, valores in filtros_seleccionados.items():
+        if filtro_columna not in columnas_set:
+            continue
+        df = df[
+            df[filtro_columna].fillna("").astype(str).map(limpiar_texto).isin(valores)
+        ].reset_index(drop=True)
+        if df.empty:
+            flash("No hay filas para procesar con los filtros seleccionados.", "warning")
+            return redirect(url_for("select_sheet"))
+
     # Procesar
     registros, stats = procesar_dataframe(
         df,
@@ -1198,6 +1432,7 @@ def process():
     session["hoja"]      = hoja
     session["stats"]     = stats
     session["edad_valores"] = edad_valores
+    session["filtros_seleccionados"] = filtros_seleccionados
     current_user = get_current_user()
     sesion_usuario = obtener_sesion_usuario_actual()
     if not sesion_usuario and current_user:
@@ -1310,7 +1545,7 @@ def preparar_whatsapp(contacto_id: int):
         return redirect(url_for("preview"))
 
     current_user = get_current_user()
-    ahora = datetime.now()
+    ahora = datetime.now(ZONA_HORARIA_PARAGUAY)
     nombre_madre = unir_nombre_apellido(contacto.nombre_madre, contacto.apellido_madre)
     if not nombre_madre:
         nombre_madre = unir_nombre_apellido(contacto.nombre, contacto.apellido)
@@ -1335,6 +1570,84 @@ def preparar_whatsapp(contacto_id: int):
 
     mensaje_codificado = quote(mensaje)
     return redirect(f"https://wa.me/{telefono}?text={mensaje_codificado}")
+
+
+@app.route("/export-respuestas/<fmt>")
+@login_required
+def export_respuestas(fmt: str):
+    sesion_id = session.get("sesion_id")
+    if not sesion_id:
+        flash("No hay datos para generar la planilla de respuestas.", "warning")
+        return redirect(url_for("index"))
+
+    contactos = ContactoTemporal.query.filter_by(
+        sesion_id=sesion_id, estado="valido"
+    ).all()
+
+    if not contactos:
+        flash("No hay contactos validos para generar la planilla de respuestas.", "warning")
+        return redirect(url_for("preview"))
+
+    ahora = datetime.now(ZONA_HORARIA_PARAGUAY)
+    filas = []
+    for contacto in contactos:
+        telefono = normalizar_telefono_whatsapp(contacto.telefono)
+        nombre_madre = unir_nombre_apellido(contacto.nombre_madre, contacto.apellido_madre)
+        if not nombre_madre:
+            nombre_madre = unir_nombre_apellido(contacto.nombre, contacto.apellido)
+        nombre_hijo = unir_nombre_apellido(contacto.nombre, contacto.apellido)
+        mensaje = construir_mensaje_whatsapp(nombre_madre, nombre_hijo, ahora)
+
+        filas.append({
+            "nombre_hijo": contacto.nombre or "",
+            "apellido_hijo": contacto.apellido or "",
+            "nombre_madre": contacto.nombre_madre or "",
+            "apellido_madre": contacto.apellido_madre or "",
+            "documento_madre": contacto.documento_madre or "",
+            "edad_anios": contacto.edad_anios or "",
+            "telefono_original": contacto.telefono or "",
+            "telefono_whatsapp": telefono,
+            "enlace_whatsapp": f"https://wa.me/{telefono}?text={quote(mensaje)}" if telefono else "",
+            "estado_respuesta": "Pendiente",
+            "respuesta_recibida": "",
+            "fecha_respuesta": "",
+            "observaciones": "",
+            "ubicacion_para_visita": "",
+            "mensaje_preparado": mensaje,
+        })
+
+    df = pd.DataFrame(filas, columns=[
+        "nombre_hijo", "apellido_hijo", "nombre_madre", "apellido_madre",
+        "documento_madre", "edad_anios", "telefono_original", "telefono_whatsapp",
+        "enlace_whatsapp", "estado_respuesta", "respuesta_recibida",
+        "fecha_respuesta", "observaciones", "ubicacion_para_visita",
+        "mensaje_preparado",
+    ])
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    nombre_base = f"planilla_respuestas_{timestamp}"
+
+    if fmt == "excel":
+        ruta_export = os.path.join(EXPORT_DIR, f"{nombre_base}.xlsx")
+        df.to_excel(ruta_export, index=False, engine="openpyxl")
+        return send_file(
+            ruta_export,
+            as_attachment=True,
+            download_name=f"{nombre_base}.xlsx",
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    elif fmt == "csv":
+        ruta_export = os.path.join(EXPORT_DIR, f"{nombre_base}.csv")
+        df.to_csv(ruta_export, index=False, encoding="utf-8-sig")
+        return send_file(
+            ruta_export,
+            as_attachment=True,
+            download_name=f"{nombre_base}.csv",
+            mimetype="text/csv",
+        )
+
+    flash("Formato de exportacion no soportado.", "danger")
+    return redirect(url_for("preview"))
 
 
 @app.route("/export/<fmt>")
