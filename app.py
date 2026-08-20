@@ -460,23 +460,34 @@ def unir_nombre_apellido(nombre: str, apellido: str = "") -> str:
     return " ".join(parte.strip() for parte in [nombre or "", apellido or ""] if parte and parte.strip())
 
 
+def nombre_remitente(username: str = "") -> str:
+    remitentes = {
+        "victor": "Lic. Victor",
+        "sonia": "Lic. Sonia",
+    }
+    return remitentes.get((username or "").strip().lower(), "")
+
+
 def construir_mensaje_whatsapp(
     nombre_madre: str,
     nombre_hijo: str = "",
     ahora: datetime | None = None,
+    username: str = "",
 ) -> str:
     nombre = (nombre_madre or "").strip() or "madre"
     referencia_hijo = f"su hijo/a {nombre_hijo.strip()}" if nombre_hijo and nombre_hijo.strip() else "su hijo/a"
     saludo = saludo_institucional(ahora)
+    remitente = nombre_remitente(username)
+    cierre = f"Muchas gracias.\n\nAtentamente,\n{remitente}" if remitente else "Muchas gracias."
     return (
         f"{saludo} Sr./Sra. {nombre}:\n\n"
         "Le saludo desde el Servicio de Vacunación del Hospital Regional de Ciudad del Este.\n\n"
-        f"Nos comunicamos para recordarle que {referencia_hijo} registra una vacuna pendiente contra el Sarampión "
-        "y otras vacunas necesarias para mantener su esquema de vacunación al día.\n\n"
+        f"Nos comunicamos para recordarle que {referencia_hijo} registra vacunas pendientes que son necesarias "
+        "para mantener su esquema de vacunación al día.\n\n"
         "Puede acercarse al Hospital Regional de Ciudad del Este de lunes a lunes, en el horario de 07:00 a 17:00 horas.\n\n"
         "Si lo prefiere, también puede enviarnos su ubicación para coordinar una visita domiciliaria.\n\n"
         "En caso de que su hijo/a ya cuente con todas las vacunas al día, favor omitir este mensaje.\n\n"
-        "Muchas gracias."
+        f"{cierre}"
     )
 
 
@@ -1550,7 +1561,7 @@ def preparar_whatsapp(contacto_id: int):
     if not nombre_madre:
         nombre_madre = unir_nombre_apellido(contacto.nombre, contacto.apellido)
     nombre_hijo = unir_nombre_apellido(contacto.nombre, contacto.apellido)
-    mensaje = construir_mensaje_whatsapp(nombre_madre, nombre_hijo, ahora)
+    mensaje = construir_mensaje_whatsapp(nombre_madre, nombre_hijo, ahora, current_user.username)
     sesion_usuario = obtener_sesion_usuario_actual()
 
     db.session.add(RegistroMensajeWhatsApp(
@@ -1588,6 +1599,7 @@ def export_respuestas(fmt: str):
         flash("No hay contactos validos para generar la planilla de respuestas.", "warning")
         return redirect(url_for("preview"))
 
+    current_user = get_current_user()
     ahora = datetime.now(ZONA_HORARIA_PARAGUAY)
     filas = []
     for contacto in contactos:
@@ -1596,7 +1608,7 @@ def export_respuestas(fmt: str):
         if not nombre_madre:
             nombre_madre = unir_nombre_apellido(contacto.nombre, contacto.apellido)
         nombre_hijo = unir_nombre_apellido(contacto.nombre, contacto.apellido)
-        mensaje = construir_mensaje_whatsapp(nombre_madre, nombre_hijo, ahora)
+        mensaje = construir_mensaje_whatsapp(nombre_madre, nombre_hijo, ahora, current_user.username)
 
         filas.append({
             "nombre_hijo": contacto.nombre or "",
