@@ -464,6 +464,7 @@ def nombre_remitente(username: str = "") -> str:
     remitentes = {
         "victor": "Lic. Victor",
         "sonia": "Lic. Sonia",
+        "daisy": "Lic. Daisy",
     }
     return remitentes.get((username or "").strip().lower(), "")
 
