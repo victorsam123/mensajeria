@@ -486,10 +486,11 @@ def construir_mensaje_whatsapp(
         "Le saludo desde el Servicio de Vacunación del Hospital Regional de Ciudad del Este.\n\n"
         f"Nos comunicamos para recordarle que {referencia_hijo} registra vacunas pendientes que son necesarias "
         "para mantener su esquema de vacunación al día.\n\n"
-        "Puede acercarse al Hospital Regional de Ciudad del Este de lunes a lunes, en el horario de 07:00 a 17:00 horas.\n\n"
-        "Si lo prefiere, también puede enviarnos su ubicación para coordinar una visita domiciliaria.\n\n"
-        "En caso de que su hijo/a ya cuente con todas las vacunas al día, favor omitir este mensaje.\n\n"
-        f"{cierre}"
+        "Puede acercarse al Hospital Regional de Ciudad del Este de lunes a domingo, en el horario de 07:00 a 17:00 horas o al vacunatorio mas cercano a su domicilio.\n\n"
+        "Si no tiene la posibilidad de acudir, puede enviarnos su ubicación para coordinar una visita domiciliaria.\n\n"
+        "Un gusto contactarte si deseas puedes guardar este contacto para tenerlo a mano ante cualquier consultas futuras. Quedo a tu entera disposicion.\n\n"
+        "Que tengas un excelente dia.\n\n"
+               f"{cierre}"
     )
 
 
